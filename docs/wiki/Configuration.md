@@ -22,6 +22,9 @@ In the container, `GW_DATA_DIR` defaults to `/data`. In a source checkout, the a
 | `GW_MIN_DISCOVERY_MINUTES` | `15` | Minimum interval accepted for a platform access. Minimum allowed setting is 1. |
 | `GW_STALL_MINUTES` | `10` | Stops a Git operation after this many minutes without progress. It does not cap a progressing run. |
 | `GW_LOG_RETENTION_DAYS` | `90` | Retention for run and activity records. Must be at least 1. |
+| `GW_DELETE_GUARD` | `on` | Mass-deletion guard for the main mirror. Accepts `true`/`false`, `1`/`0`, `on`/`off`, `yes`/`no` (case-insensitive); any other value, including an empty string, stops startup. `off` disables every guard rule, including "every ref deleted" and "every branch deleted", and restores the old behavior where an emptied source also empties the main mirror. See [Mass-deletion guard](#mass-deletion-guard). |
+| `GW_DELETE_GUARD_RATIO` | `0.5` | Hold the main mirror when one run would delete at least this fraction of its refs (greater than 0, at most 1). Deleting every ref, or every branch, is always held regardless of this value. |
+| `GW_DELETE_GUARD_MIN_REFS` | `3` | The ratio rule applies only when at least this many refs would be deleted, so removing one branch from a small repository is not held. Must be at least 1. |
 
 Compose also reads these project-environment values:
 
@@ -49,15 +52,79 @@ stall_minutes = 10
 
 [logs]
 retention_days = 90
+
+[safety]
+delete_guard = true
+delete_guard_ratio = 0.5
+delete_guard_min_refs = 3
 ```
 
-Environment variables override the corresponding TOML values. Invalid numbers or values outside the validation range stop startup with an explanatory error. A task's sync interval and a platform access's discovery interval must also satisfy the configured minimum when saved in the WebUI.
+Environment variables override the corresponding TOML values. In `[safety]`, `delete_guard` takes a TOML boolean or one of the strings accepted by `GW_DELETE_GUARD`; `delete_guard_ratio` and `delete_guard_min_refs` must be TOML numbers (`delete_guard_min_refs` an integer), not strings. Unlike the numeric variables, `GW_DELETE_GUARD` set to an empty string is an error rather than "unset". Invalid numbers or values outside the validation range stop startup with an explanatory error. A task's sync interval and a platform access's discovery interval must also satisfy the configured minimum when saved in the WebUI.
 
 ## Scheduling behavior
 
 Hand-created tasks default to a 60-minute sync interval. Platform-discovered tasks inherit the access's default sync interval, which is 60 minutes unless changed. Platform discovery also defaults to 60 minutes. These are task/access values; the `GW_MIN_*` settings are lower bounds.
 
 After a run, GitWarden calculates the next due time from the run's end. The effective interval can be larger than the configured value when the recent successful runs are long, and repeated failures apply exponential backoff up to six hours. A successful run clears the failure backoff. A Git operation with progress may run for hours; `GW_STALL_MINUTES` only detects a no-progress stall.
+
+## Mass-deletion guard
+
+A fetch that succeeds but returns an empty or nearly empty source (for example, a repository that was deleted and recreated empty under the same name) would otherwise delete the matching refs from every main mirror. Before any push, GitWarden counts the main-mirror refs that the run would delete. The guard trips when any of these is true:
+
+1. the run would delete **every** ref in the main mirror (always held, whatever the ratio and minimum);
+2. the run would delete **every branch** (`refs/heads/*`) in the main mirror, however many tags remain (always held);
+3. the run would delete at least `delete_guard_min_refs` refs (default 3) **and** at least `delete_guard_ratio` of the main mirror's refs (default 0.5; branches and tags are counted together).
+
+When the guard trips, the whole main-mirror update for that target is held: neither the deletions nor any other update in the same run is pushed, so the mirror is never left half-updated. The local archive and the history repository still receive the preservation tags, and the run is recorded as `delete_guard` (**Mass deletion held**) without failure backoff. The run's Logs entry summarizes how many refs would have been deleted and names the first few. Later runs are held again for as long as the same refs are still missing from the source, and **Retry** on the target runs the same check, so it is held again too (and is recorded as `delete_guard`, not as a failure).
+
+### How a hold clears
+
+The guard keeps no state between runs. Every run recounts, **by ref name only**, the main-mirror refs whose names are missing from the source, and decides again from scratch. This has three consequences:
+
+- **A ref counts as back as soon as a ref with the same name exists in the source, whatever it points to.** If the deleted branches are recreated under the same names with arbitrary or unrelated content, the next run is not held and the main mirror is force-updated (non-fast-forward) to the new commits. The old commits are not lost: they were pushed to the history repository in the held run, and the history gate still requires that before rewriting.
+- **A partial recreation can release the rest.** If only some refs come back and the deletions that remain fall below the thresholds (not every ref, not every branch, and fewer than `delete_guard_min_refs` or below `delete_guard_ratio`), those remaining deletions are applied in that run without any confirmation.
+- **Nothing marks the release.** The run that finally changes the main mirror is an ordinary `ok` run; the delete events were recorded in the held run, and no event says that the hold was cleared.
+
+Remembering the held set (and releasing only when the same commits come back, or on an explicit confirmation) is planned as a follow-up together with the per-target release action.
+
+### Releasing a held target
+
+First check the source: was it emptied, recreated, renamed, or is the task pointing at the wrong repository? Then choose one of the following:
+
+- **(a) The source recovers.** Restore the source (or fix the task's source URL). The next run passes the guard and syncs normally; nothing else is needed. Because only names are counted (see above), check that the restored refs have the content you expect: same-name refs with different content are accepted and rewrite the mirror.
+- **(b) The deletion was intended.**
+  1. For a partial deletion (rule 3), temporarily raise `GW_DELETE_GUARD_RATIO` (`delete_guard_ratio` in `[safety]`) above the share being deleted, or raise `GW_DELETE_GUARD_MIN_REFS`. When every ref or every branch is deleted (rules 1 and 2), raising the ratio does not help: set `GW_DELETE_GUARD=off` instead.
+  2. Restart GitWarden so that the setting is read.
+  3. Run the task once (**Run now**, or wait for the schedule) and confirm that the target is healthy.
+  4. Restore the original setting and restart again.
+
+If the deletion includes the target's default branch and the target refuses to delete it (Gitea and Forgejo default branches, or a bare repository with the default `receive.denyDeleteCurrent`), the release run deletes the other refs but reports `conflict` for that branch; change the target's default branch first, or leave that branch in place.
+
+**Cost:** these settings are global. While the guard is relaxed or off, **no task** has mass-deletion protection, not only the one you are releasing. Any other source that is emptied during that window will empty its main mirror (the deleted refs are still preserved in the history repository). Keep the window short and do not forget step 4. A per-target "accept this deletion" action is planned as a follow-up and is not part of this release.
+
+### False positives
+
+- Legitimately renaming three or more branches in one go (for example `b1..b3` to `renamed-b1..3` in a 4-ref repository) deletes the old names and is held when it reaches the ratio. The new names are held along with everything else in that run.
+- Renaming every branch, including renaming the only branch of a repository (for example `master` to `main`) while tags remain, is held by rule 2.
+- A one-shot cleanup that removes at least half of the refs and at least three of them (for example 10 of 15 merged branches) is held.
+
+Release these with option (b) above.
+
+### Known bypasses
+
+The guard is a tripwire for an emptied or mostly emptied source, not a complete defense against a hostile source. These cases are **not** held:
+
+- **Gradual deletion:** deleting a few refs per run, each run below the threshold, until only one ref is left. The last deletion is held only if it would empty the mirror.
+- **Placeholder first:** creating a new empty branch, then deleting the original refs over one or more runs; the placeholder keeps the mirror from becoming empty.
+- **Dilution with junk tags:** adding many tags first so that later branch deletions stay under the ratio. Deleting *every* branch is still held by rule 2, but deleting all but one branch is not.
+- **Very small repositories:** with only two refs (for example `main` and `dev`), deleting one is below `delete_guard_min_refs`, so a recreated repository that keeps one ref name passes.
+- **Force-push to unrelated history:** rewriting branches is not a deletion and is never counted by the guard.
+
+In every one of these cases the old objects are still preserved: each deleted or rewritten ref gets a `gw/<ULID>` preservation tag in the local archive and in the history repository before the main mirror changes, and end-to-end tests of each case found every original commit in the history repository. Recover from there as described in [Backup and recovery](Backup-and-recovery.md).
+
+### Turning the guard off
+
+`GW_DELETE_GUARD=off` (or `0`, `false`, `no`, or `delete_guard = false`) disables **all** guard rules, including "every ref deleted" and "every branch deleted". There is no separate switch that keeps only the "delete everything" protection. Leave the guard on unless you are releasing a held target as described above.
 
 ## Data layout
 

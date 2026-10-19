@@ -45,7 +45,7 @@ from gitwarden.platform import PlatformError
 from gitwarden.provision import provision_target
 from gitwarden.runner import archive_path, bind_target, forget_target
 from gitwarden.scheduler import Scheduler
-from gitwarden.target import TargetMismatch, TargetNotEmpty
+from gitwarden.target import DeleteGuard, TargetMismatch, TargetNotEmpty, configure_delete_guard
 
 log = logging.getLogger("gitwarden")
 
@@ -61,6 +61,7 @@ STATUS_LABELS = {
     "conflict": "common.status.conflict",
     "history_conflict": "common.status.history_conflict",
     "audit_alert": "common.status.audit_alert",
+    "delete_guard": "common.status.delete_guard",
     "error": "common.status.error",
 }
 KIND_LABELS = {
@@ -658,6 +659,14 @@ def _find_event(store: Store, task_id: int, event_id: int) -> dict | None:
 
 
 def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
+    configure_delete_guard(
+        DeleteGuard(
+            enabled=config.delete_guard,
+            ratio=config.delete_guard_ratio,
+            min_refs=config.delete_guard_min_refs,
+        )
+    )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         store = Store(
