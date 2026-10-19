@@ -75,13 +75,23 @@ A fetch that succeeds but returns an empty or nearly empty source (for example, 
 2. the run would delete **every branch** (`refs/heads/*`) in the main mirror, however many tags remain (always held);
 3. the run would delete at least `delete_guard_min_refs` refs (default 3) **and** at least `delete_guard_ratio` of the main mirror's refs (default 0.5; branches and tags are counted together).
 
-When the guard trips, the whole main-mirror update for that target is held: neither the deletions nor any other update in the same run is pushed, so the mirror is never left half-updated. The local archive and the history repository still receive the preservation tags, and the run is recorded as `delete_guard` (**Mass deletion held**) without failure backoff. The run's Logs entry summarizes how many refs would have been deleted and names the first few. Later runs are held again for as long as the source stays the same, and **Retry** on the target runs the same check, so it is held again too (and is recorded as `delete_guard`, not as a failure).
+When the guard trips, the whole main-mirror update for that target is held: neither the deletions nor any other update in the same run is pushed, so the mirror is never left half-updated. The local archive and the history repository still receive the preservation tags, and the run is recorded as `delete_guard` (**Mass deletion held**) without failure backoff. The run's Logs entry summarizes how many refs would have been deleted and names the first few. Later runs are held again for as long as the same refs are still missing from the source, and **Retry** on the target runs the same check, so it is held again too (and is recorded as `delete_guard`, not as a failure).
+
+### How a hold clears
+
+The guard keeps no state between runs. Every run recounts, **by ref name only**, the main-mirror refs whose names are missing from the source, and decides again from scratch. This has three consequences:
+
+- **A ref counts as back as soon as a ref with the same name exists in the source, whatever it points to.** If the deleted branches are recreated under the same names with arbitrary or unrelated content, the next run is not held and the main mirror is force-updated (non-fast-forward) to the new commits. The old commits are not lost: they were pushed to the history repository in the held run, and the history gate still requires that before rewriting.
+- **A partial recreation can release the rest.** If only some refs come back and the deletions that remain fall below the thresholds (not every ref, not every branch, and fewer than `delete_guard_min_refs` or below `delete_guard_ratio`), those remaining deletions are applied in that run without any confirmation.
+- **Nothing marks the release.** The run that finally changes the main mirror is an ordinary `ok` run; the delete events were recorded in the held run, and no event says that the hold was cleared.
+
+Remembering the held set (and releasing only when the same commits come back, or on an explicit confirmation) is planned as a follow-up together with the per-target release action.
 
 ### Releasing a held target
 
 First check the source: was it emptied, recreated, renamed, or is the task pointing at the wrong repository? Then choose one of the following:
 
-- **(a) The source recovers.** Restore the source (or fix the task's source URL). The next run passes the guard and syncs normally; nothing else is needed.
+- **(a) The source recovers.** Restore the source (or fix the task's source URL). The next run passes the guard and syncs normally; nothing else is needed. Because only names are counted (see above), check that the restored refs have the content you expect: same-name refs with different content are accepted and rewrite the mirror.
 - **(b) The deletion was intended.**
   1. For a partial deletion (rule 3), temporarily raise `GW_DELETE_GUARD_RATIO` (`delete_guard_ratio` in `[safety]`) above the share being deleted, or raise `GW_DELETE_GUARD_MIN_REFS`. When every ref or every branch is deleted (rules 1 and 2), raising the ratio does not help: set `GW_DELETE_GUARD=off` instead.
   2. Restart GitWarden so that the setting is read.

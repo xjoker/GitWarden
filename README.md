@@ -21,7 +21,7 @@ A source that still answers but has suddenly become empty, or has lost most of i
 
 What to know about the mass-deletion guard (details in [Configuration → Mass-deletion guard](docs/wiki/Configuration.md#mass-deletion-guard)):
 
-- **Release:** if the source recovers, the next run syncs by itself. If the deletion was intended, temporarily raise `GW_DELETE_GUARD_RATIO` or set `GW_DELETE_GUARD=off` (only `off` helps when every ref or every branch is deleted), restart, let one run complete, then restore the setting and restart. **Retry** alone is held again.
+- **Release:** the guard counts ref names only and keeps no state. As soon as refs with the same names are back in the source, whatever they point to, the next run passes and the main mirror is rewritten to them. If only some come back and the remaining deletions fall below the thresholds, those deletions are applied in that run. The old commits stay in the history repository. If the deletion was intended, temporarily raise `GW_DELETE_GUARD_RATIO` or set `GW_DELETE_GUARD=off` (only `off` helps when every ref or every branch is deleted), restart, let one run complete, then restore the setting and restart. **Retry** alone is held again.
 - **Cost:** the setting is global, so while it is relaxed or off no task has mass-deletion protection.
 - **False positives:** legitimately renaming three or more branches at once, renaming every branch, or a large one-shot cleanup is held.
 - **Not caught:** gradual deletion, creating a placeholder branch before deleting, diluting the ratio with junk tags, two-ref repositories, and force-pushes to unrelated history. The history repository still preserves every deleted or rewritten ref in these cases.

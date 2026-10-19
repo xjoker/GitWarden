@@ -414,3 +414,64 @@ def test_summary_lists_first_refs_and_target_count() -> None:
     two = render(_held_summary([many, many[:2]]), "en")
     assert two.startswith("Mass deletion held on 2 targets")
     assert _held_summary([]) is None
+
+
+# ---- 同名重建（Elliot M7，D-all3 / D-one）：固定现有的无状态行为 ----
+# 保护只按 ref 名字计数、不记被拦状态。下面两条测试把“同名重建即放行”和
+# “部分重建后低于门槛的删除直接生效”固定下来；“记住被拦集合”留作 follow-up。
+
+
+def _orphan(src: Path, label: str) -> str:
+    tree = run(src, "mktree", input="").stdout.strip()
+    return run(src, *ID, "commit-tree", tree, "-m", label).stdout.strip()
+
+
+def _held_after_deleting_b1_to_b3(tmp_path: Path) -> tuple[Env, dict[str, str]]:
+    env = Env(tmp_path, branches=4)  # main, b1, b2, b3 + v1 = 5 refs
+    before = mirror_refs(env.main)
+    assert len(before) == 5
+    for name in ("b1", "b2", "b3"):
+        run(env.src, "branch", "-D", name)
+    env.cap()
+    res = push_target(env.ar, env.t)
+    assert res.delete_guard == ["refs/heads/b1", "refs/heads/b2", "refs/heads/b3"]
+    assert mirror_refs(env.main) == before
+    return env, before
+
+
+def test_same_name_recreate_with_unrelated_commits_releases_guard(tmp_path: Path) -> None:
+    """D-all3：被拦后源上用无关提交同名重建 b1..b3，下一轮自动放行，主镜像被非快进改写。"""
+    env, before = _held_after_deleting_b1_to_b3(tmp_path)
+    new = {}
+    for name in ("b1", "b2", "b3"):
+        new[name] = _orphan(env.src, f"recreated {name}")
+        run(env.src, "branch", name, new[name])
+    env.cap()
+
+    res = push_target(env.ar, env.t)
+
+    assert res.main_ok and not res.delete_guard
+    after = mirror_refs(env.main)
+    for name in ("b1", "b2", "b3"):
+        assert after[f"refs/heads/{name}"] == new[name] != before[f"refs/heads/{name}"]
+        # 旧提交在被拦的那一轮已经推到历史仓，可以找回。
+        assert run(env.hist, "cat-file", "-e", before[f"refs/heads/{name}"] + "^{commit}")
+    assert after["refs/heads/main"] == before["refs/heads/main"]
+
+
+def test_partial_recreate_applies_remaining_deletes_below_threshold(tmp_path: Path) -> None:
+    """D-one：只同名重建 b1；剩下 b2、b3 两个删除低于 min_refs=3，这一轮直接删掉。"""
+    env, before = _held_after_deleting_b1_to_b3(tmp_path)
+    new_b1 = _orphan(env.src, "recreated b1")
+    run(env.src, "branch", "b1", new_b1)
+    env.cap()
+
+    res = push_target(env.ar, env.t)
+
+    assert res.main_ok and not res.delete_guard
+    after = mirror_refs(env.main)
+    assert after["refs/heads/b1"] == new_b1
+    assert "refs/heads/b2" not in after and "refs/heads/b3" not in after
+    assert sorted(after) == ["refs/heads/b1", "refs/heads/main", "refs/tags/v1"]
+    for name in ("b1", "b2", "b3"):
+        assert run(env.hist, "cat-file", "-e", before[f"refs/heads/{name}"] + "^{commit}")
