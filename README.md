@@ -29,7 +29,7 @@ What to know about the mass-deletion guard (details in [Configuration → Mass-d
 - **Cost:** the setting is global, so while it is relaxed or off no task has mass-deletion protection.
 - **False positives:** legitimately renaming three or more branches at once, renaming every branch, or a large one-shot cleanup is held.
 - **Not caught:** gradual deletion, creating a placeholder branch before deleting, diluting the ratio with junk tags, two-ref repositories, and force-pushes to unrelated history. The history repository still preserves every deleted or rewritten ref in these cases.
-- `GW_DELETE_GUARD=off` (or `0`) also disables the "every ref deleted" protection.
+- `GW_DELETE_GUARD=off` (or `0`) also disables the "every ref deleted" and "every branch deleted" protections; all guard rules are off.
 
 GitWarden protects states it has actually collected. A change that appears and disappears between polling runs cannot be recovered. Git objects are in scope; LFS payloads and submodule repositories are not copied. The UI detects these references and marks the task as an incomplete backup so that the limitation is visible.
 

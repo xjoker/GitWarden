@@ -114,8 +114,8 @@ Release these with option (b) above.
 
 The guard is a tripwire for an emptied or mostly emptied source, not a complete defense against a hostile source. These cases are **not** held:
 
-- **Gradual deletion:** deleting a few refs per run, each run below the threshold, until only one ref is left. The last deletion is held only if it would empty the mirror.
-- **Placeholder first:** creating a new empty branch, then deleting the original refs over one or more runs; the placeholder keeps the mirror from becoming empty.
+- **Gradual deletion:** deleting a few refs per run, each run below the thresholds (fewer than `delete_guard_min_refs` refs, or less than `delete_guard_ratio` of the mirror), until one branch is left. Every earlier deletion is applied; only the run that would delete the last remaining branch (rule 2) or the last remaining ref (rule 1) is held.
+- **Placeholder first:** creating a new branch, letting one run copy it to the main mirror, then deleting the original refs over one or more runs; because the placeholder branch stays, the mirror never loses every ref or every branch. (If the placeholder first appears in the same run that deletes every original branch, rule 2 still holds that run.)
 - **Dilution with junk tags:** adding many tags first so that later branch deletions stay under the ratio. Deleting *every* branch is still held by rule 2, but deleting all but one branch is not.
 - **Very small repositories:** with only two refs (for example `main` and `dev`), deleting one is below `delete_guard_min_refs`, so a recreated repository that keeps one ref name passes.
 - **Force-push to unrelated history:** rewriting branches is not a deletion and is never counted by the guard.
