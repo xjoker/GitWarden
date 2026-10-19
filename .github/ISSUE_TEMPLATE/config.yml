@@ -1,8 +1,11 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Security vulnerability
+  - name: Report a security vulnerability
+    url: https://github.com/xjoker/GitWarden/security/advisories/new
+    about: Report vulnerabilities privately. Do not report them in a public issue.
+  - name: Security policy
     url: https://github.com/xjoker/GitWarden/blob/main/SECURITY.md#reporting-a-vulnerability
-    about: Do not report vulnerabilities in a public issue. Follow the security policy instead.
+    about: What to include and what to keep out of a report.
   - name: Documentation and user guide
     url: https://github.com/xjoker/GitWarden/blob/main/docs/wiki/Home.md
     about: Deployment, configuration, backup/recovery, and troubleshooting guides.
