@@ -1,6 +1,10 @@
 """Listen address: loopback by default, explicit settings win, the image keeps 0.0.0.0."""
 
+import logging
+import os
 import shlex
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -62,6 +66,103 @@ def test_blank_environment_values_fall_through(tmp_path: Path, blank: str) -> No
 def test_invalid_toml_host_is_rejected(tmp_path: Path, literal: str) -> None:
     with pytest.raises(ConfigError, match="host"):
         load_config(_env(tmp_path, f"[server]\nhost = {literal}\n"))
+
+
+BAD_HOSTS = ["not a host!", "[::]", "0.0.0.0 127.0.0.1", "*", "0", "127.1", "0x7f000001", "-x"]
+GOOD_HOSTS = ["127.0.0.1", "0.0.0.0", "::", "::1", "192.0.2.10", "localhost", "gw.example.lan"]
+
+
+@pytest.mark.parametrize("value", BAD_HOSTS)
+def test_invalid_gw_host_is_rejected_naming_the_environment_variable(
+    tmp_path: Path, value: str
+) -> None:
+    with pytest.raises(ConfigError) as caught:
+        load_config(_env(tmp_path, GW_HOST=value))
+    message = str(caught.value)
+    assert "环境变量 GW_HOST" in message and repr(value) in message
+    assert "[server] host" not in message
+
+
+@pytest.mark.parametrize("value", BAD_HOSTS)
+def test_invalid_toml_host_is_rejected_naming_the_file(tmp_path: Path, value: str) -> None:
+    env = _env(tmp_path, f"[server]\nhost = {value!r}\n".replace("'", '"'))
+    with pytest.raises(ConfigError) as caught:
+        load_config(env)
+    message = str(caught.value)
+    assert env["GW_CONFIG"] in message and "[server] host" in message
+    assert repr(value) in message and "GW_HOST" not in message
+
+
+def test_invalid_image_default_is_rejected_naming_gw_default_host(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="环境变量 GW_DEFAULT_HOST"):
+        load_config(_env(tmp_path, GW_DEFAULT_HOST="*"))
+
+
+def test_invalid_toml_host_is_rejected_even_when_gw_host_is_set(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match=r"\[server\] host"):
+        load_config(_env(tmp_path, '[server]\nhost = "*"\n', GW_HOST="127.0.0.1"))
+
+
+@pytest.mark.parametrize("value", GOOD_HOSTS)
+def test_valid_hosts_are_accepted_from_every_source(tmp_path: Path, value: str) -> None:
+    assert load_config(_env(tmp_path, GW_HOST=value)).host == value
+    assert load_config(_env(tmp_path, f'[server]\nhost = "{value}"\n')).host == value
+    assert load_config(_env(tmp_path, GW_DEFAULT_HOST=value)).host == value
+
+
+def test_gw_host_overriding_toml_logs_one_warning(tmp_path: Path, caplog) -> None:
+    env = _env(tmp_path, '[server]\nhost = "127.0.0.1"\n', GW_HOST="0.0.0.0")
+    with caplog.at_level(logging.WARNING, logger="gitwarden"):
+        config = load_config(env)
+    assert config.host == "0.0.0.0"  # the warning does not change the priority
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    text = warnings[0].getMessage()
+    assert "GW_HOST=0.0.0.0" in text and "127.0.0.1" in text and env["GW_CONFIG"] in text
+
+
+@pytest.mark.parametrize(
+    ("toml", "gw_host"),
+    [
+        ('[server]\nhost = "127.0.0.1"\n', "127.0.0.1"),  # same value
+        ('[server]\nhost = "127.0.0.1"\n', " 127.0.0.1 "),  # same after strip
+        ('[server]\nhost = "127.0.0.1"\n', ""),  # blank GW_HOST counts as unset
+        ("[server]\nport = 8080\n", "0.0.0.0"),  # no TOML host
+    ],
+)
+def test_no_override_warning_without_a_conflict(
+    tmp_path: Path, caplog, toml: str, gw_host: str
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="gitwarden"):
+        load_config(_env(tmp_path, toml, GW_HOST=gw_host))
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_image_default_does_not_trigger_the_override_warning(tmp_path: Path, caplog) -> None:
+    with caplog.at_level(logging.WARNING, logger="gitwarden"):
+        config = load_config(
+            _env(tmp_path, '[server]\nhost = "127.0.0.1"\n', GW_DEFAULT_HOST="0.0.0.0")
+        )
+    assert config.host == "127.0.0.1"
+    assert not caplog.records
+
+
+def test_process_exits_before_serving_on_invalid_gw_host(tmp_path: Path) -> None:
+    # Real process, nothing mocked: startup must stop in config loading with the source named.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GW_")}
+    env |= _env(tmp_path, GW_HOST="*", GW_PORT="1")
+    result = subprocess.run(
+        [sys.executable, "-m", "gitwarden"],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 1
+    assert "启动失败" in result.stderr and "环境变量 GW_HOST" in result.stderr
+    assert "Uvicorn running" not in result.stderr
+    assert not (tmp_path / "data" / "gitwarden.db").exists()
 
 
 def test_entrypoint_passes_configured_host_to_uvicorn(tmp_path: Path, monkeypatch) -> None:
@@ -140,7 +241,7 @@ def test_compose_keeps_image_default_and_loopback_host_mapping() -> None:
 
 
 def test_shipped_examples_do_not_pin_a_listen_host() -> None:
-    # The TOML example is also copied into Docker volumes; a pinned host would override
+    # Users may copy the TOML example into a Docker volume; a pinned host would override
     # the image default there, so it must stay commented out.
     for name in ("data/config/gitwarden.toml.example", ".env.example"):
         for line in (ROOT / name).read_text().splitlines():

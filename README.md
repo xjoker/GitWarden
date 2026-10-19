@@ -92,9 +92,11 @@ For a non-Compose deployment, see [Deployment](docs/wiki/Deployment.md). For con
 
 ### Listen address
 
-> **Upgrade note:** when started directly (`python -m gitwarden`, systemd, or a custom image without this repository's `Dockerfile`), GitWarden now listens on `127.0.0.1` only. Earlier versions always listened on `0.0.0.0`. To accept connections from other machines again, set `GW_HOST=0.0.0.0` or `host = "0.0.0.0"` under `[server]` in `gitwarden.toml`, preferably behind a firewall or reverse proxy.
+> **Upgrade note:** when started directly (`python -m gitwarden`, systemd, or a custom image without this repository's `Dockerfile`), GitWarden now listens on `127.0.0.1` only. Earlier versions always listened on `0.0.0.0`. This also affects containers on the same host that connect to a directly run instance (for example through `172.17.0.1`). To accept connections from other machines again, set `GW_HOST=0.0.0.0` or `host = "0.0.0.0"` under `[server]` in `gitwarden.toml`, preferably behind a firewall or reverse proxy.
 
-The official image and the Compose file are not affected: the image sets `GW_DEFAULT_HOST=0.0.0.0`, so the application still listens on all interfaces inside the container, and Compose publishes the port on `127.0.0.1` on the host (`GW_BIND`). An explicit `GW_HOST` or `[server] host` always wins over that image default. See [Listen address](docs/wiki/Configuration.md#listen-address).
+The official image and the Compose file are not affected (except with `--network host`, see below): the image sets `GW_DEFAULT_HOST=0.0.0.0`, so the application still listens on all interfaces inside the container, and Compose publishes the port by default on `127.0.0.1` on the host (`GW_BIND`). An explicit `GW_HOST` or `[server] host` always wins over that image default.
+
+With `--network host` (Compose: `network_mode: host`), the image listens on every host interface, and `GW_BIND` and `--publish` have no effect. Set `host = "127.0.0.1"` under `[server]` in the mounted `gitwarden.toml`, or `GW_HOST=127.0.0.1`, to restrict it. See [Listen address](docs/wiki/Configuration.md#listen-address).
 
 ## Create the first backup
 

@@ -94,9 +94,11 @@ GW_IMAGE=ghcr.io/xjoker/gitwarden:20261016.1 docker compose up -d --no-build
 
 ### 监听地址
 
-> **升级说明：** 直接运行时（`python -m gitwarden`、systemd，或者不基于本仓库 `Dockerfile` 的自制镜像），GitWarden 现在只监听 `127.0.0.1`。之前的版本总是监听 `0.0.0.0`。如果需要重新让其他机器访问，请设置 `GW_HOST=0.0.0.0`，或在 `gitwarden.toml` 的 `[server]` 下写 `host = "0.0.0.0"`，最好放在防火墙或反向代理之后。
+> **升级说明：** 直接运行时（`python -m gitwarden`、systemd，或者不基于本仓库 `Dockerfile` 的自制镜像），GitWarden 现在只监听 `127.0.0.1`。之前的版本总是监听 `0.0.0.0`。同一台宿主机上从容器里访问直接运行实例的情况（例如通过 `172.17.0.1`）也会受影响。如果需要重新让其他机器访问，请设置 `GW_HOST=0.0.0.0`，或在 `gitwarden.toml` 的 `[server]` 下写 `host = "0.0.0.0"`，最好放在防火墙或反向代理之后。
 
-官方镜像和 Compose 不受影响：镜像设置了 `GW_DEFAULT_HOST=0.0.0.0`，容器内仍监听所有接口；Compose 在宿主机上仍只把端口发布到 `127.0.0.1`（`GW_BIND`）。显式设置的 `GW_HOST` 或 `[server] host` 总是优先于镜像默认值。详见 [Listen address](docs/wiki/Configuration.md#listen-address)。
+官方镜像和 Compose 不受影响（`--network host` 除外，见下文）：镜像设置了 `GW_DEFAULT_HOST=0.0.0.0`，容器内仍监听所有接口；Compose 默认在宿主机上只把端口发布到 `127.0.0.1`（`GW_BIND`）。显式设置的 `GW_HOST` 或 `[server] host` 总是优先于镜像默认值。
+
+使用 `--network host`（Compose 中为 `network_mode: host`）时，镜像会监听宿主机的所有网卡，`GW_BIND` 和 `--publish` 都不起作用。要收窄监听范围，请在挂载的 `gitwarden.toml` 的 `[server]` 下写 `host = "127.0.0.1"`，或设置 `GW_HOST=127.0.0.1`。详见 [Listen address](docs/wiki/Configuration.md#listen-address)。
 
 ## 创建第一个备份
 
