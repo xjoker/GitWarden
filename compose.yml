@@ -14,8 +14,10 @@ services:
       - "${GW_BIND:-127.0.0.1}:${GW_PORT:-8080}:${GW_PORT:-8080}"
     restart: unless-stopped
     # Defense-in-depth runtime hardening: the app only needs to write to the
-    # mounted data volume, so run with a read-only root filesystem, a small
-    # writable tmpfs for /tmp, no Linux capabilities, and no privilege escalation.
+    # mounted data volume and /tmp, so run with a read-only root filesystem, a
+    # writable tmpfs for /tmp (mounted noexec by Docker; no size limit is set, so
+    # the kernel default of up to half of host memory applies), no Linux
+    # capabilities, and no privilege escalation.
     read_only: true
     tmpfs:
       - /tmp

@@ -132,7 +132,7 @@ First check the source: was it emptied, recreated, renamed, or is the task point
 
 If the deletion includes the target's default branch and the target refuses to delete it (Gitea and Forgejo default branches, or a bare repository with the default `receive.denyDeleteCurrent`), the release run deletes the other refs but reports `conflict` for that branch; change the target's default branch first, or leave that branch in place.
 
-**Cost:** these settings are global. While the guard is relaxed or off, **no task** has mass-deletion protection, not only the one you are releasing. Any other source that is emptied during that window will empty its main mirror (the deleted refs are still preserved in the history repository). Keep the window short and do not forget step 4. A per-target "accept this deletion" action is planned as a follow-up and is not part of this release.
+**Cost:** these settings are global. While the guard is off, **no task** has mass-deletion protection, not only the one you are releasing; while only the ratio or minimum is raised, every task keeps rules 1 and 2 but has a weaker rule 3. Any other source that is emptied during that window will empty its main mirror (the deleted refs are still preserved in the history repository). Keep the window short and do not forget step 4. A per-target "accept this deletion" action is planned as a follow-up and is not part of this release.
 
 ### False positives
 
@@ -146,8 +146,8 @@ Release these with option (b) above.
 
 The guard is a tripwire for an emptied or mostly emptied source, not a complete defense against a hostile source. These cases are **not** held:
 
-- **Gradual deletion:** deleting a few refs per run, each run below the threshold, until only one ref is left. The last deletion is held only if it would empty the mirror.
-- **Placeholder first:** creating a new empty branch, then deleting the original refs over one or more runs; the placeholder keeps the mirror from becoming empty.
+- **Gradual deletion:** deleting a few refs per run, each run below the thresholds (fewer than `delete_guard_min_refs` refs, or less than `delete_guard_ratio` of the mirror), until one branch is left. Every earlier deletion is applied; only the run that would delete the last remaining branch (rule 2) or the last remaining ref (rule 1) is held.
+- **Placeholder first:** creating a new branch, letting one run copy it to the main mirror, then deleting the original refs over several runs, each run below the thresholds; because the placeholder branch stays, the mirror never loses every ref or every branch. (Deleting at least `delete_guard_min_refs` original refs and at least `delete_guard_ratio` of the mirror in one run is still held by rule 3. If the placeholder first appears in the same run that deletes every original branch, rule 2 still holds that run, and rule 1 as well when there are no tags.)
 - **Dilution with junk tags:** adding many tags first so that later branch deletions stay under the ratio. Deleting *every* branch is still held by rule 2, but deleting all but one branch is not.
 - **Very small repositories:** with only two refs (for example `main` and `dev`), deleting one is below `delete_guard_min_refs`, so a recreated repository that keeps one ref name passes.
 - **Force-push to unrelated history:** rewriting branches is not a deletion and is never counted by the guard.
