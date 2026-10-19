@@ -50,11 +50,11 @@ GitWarden 修改主镜像上已有的 ref 之前，会先经过安全门禁。�
 ```bash
 stty -echo; printf 'GitWarden admin password: '; IFS= read -r GW_ADMIN_PASSWORD; stty echo; echo
 export GW_ADMIN_PASSWORD
-docker run -d --name gitwarden-trial --restart unless-stopped -e GW_ADMIN_PASSWORD -p 127.0.0.1:8080:8080 -v gitwarden-trial-data:/data --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 ghcr.io/xjoker/gitwarden:20261016.1
+docker run -d --name gitwarden-trial --restart unless-stopped -e GW_ADMIN_PASSWORD -p 127.0.0.1:8080:8080 -v gitwarden-trial-data:/data --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 ghcr.io/xjoker/gitwarden:20261019.2
 unset GW_ADMIN_PASSWORD
 ```
 
-第一行在 bash 和 zsh 中都能运行：`stty -echo` 让输入不回显，`read` 让密码不进入 shell 历史。不带值的 `-e GW_ADMIN_PASSWORD` 会从当前环境传入密码，之后的 `unset` 会把它从当前 shell 中清除。如果通过 `sudo` 运行 Docker，请用 `sudo --preserve-env=GW_ADMIN_PASSWORD docker run …`：普通 `sudo` 会丢掉这个变量，容器会拒绝启动。不要用 `sudo -E`，它会把整套环境交给 root，包括 `DOCKER_HOST`、`DOCKER_CONTEXT` 和代理设置。GitWarden 只从环境变量 `GW_ADMIN_PASSWORD` 读取密码，所以无论用 `-e` 还是 `--env-file` 传入，能访问 Docker daemon 的人都可以用 `docker inspect` 看到它。按 [Deployment](docs/wiki/Deployment.md#plain-docker) 使用权限为 600 的环境变量文件加 `--env-file`，同样可以避免密码进入 shell 历史，但它是存在磁盘上的明文文件。不要把端口发布到公网接口，见 [Security](SECURITY.md)。
+第一行在 bash 和 zsh 中都能运行：`stty -echo` 让输入不回显，`read` 让密码不进入 shell 历史。不带值的 `-e GW_ADMIN_PASSWORD` 会从当前环境传入密码，之后的 `unset` 会把它从当前 shell 中清除。如果通过 `sudo` 运行 Docker，请用 `sudo --preserve-env=GW_ADMIN_PASSWORD docker run …`：普通 `sudo` 会丢掉这个变量，容器会拒绝启动。不要用 `sudo -E`，它会把整套环境交给 root，包括 `DOCKER_HOST`、`DOCKER_CONTEXT` 和代理设置。GitWarden 只从环境变量 `GW_ADMIN_PASSWORD` 读取密码，所以无论用 `-e` 还是 `--env-file` 传入，能访问 Docker daemon 的人都可以用 `docker inspect` 看到它。按 [Deployment](docs/wiki/Deployment.md#plain-docker) 使用权限为 600 的环境变量文件加 `--env-file`，同样可以避免密码进入 shell 历史，但它是存在磁盘上的明文文件。不要把端口发布到公网接口，见 [Security](SECURITY.md)。请保留 `-p 127.0.0.1:8080:8080` 中的 `127.0.0.1:` 前缀：不写地址的 `-p 8080:8080` 会把端口发布到所有 IPv4 和 IPv6 接口（`0.0.0.0` 和 `[::]`），而且 Docker 发布的端口会绕过 ufw 等宿主机防火墙规则。
 
 试用容器使用数据卷 `gitwarden-trial-data`，与 Compose 的 `gitwarden-data` 分开，但端口同样是 8080。启动 Compose 前先执行 `docker rm -f gitwarden-trial`；不再需要试用数据时，用 `docker volume rm gitwarden-trial-data` 删除。
 
@@ -81,24 +81,26 @@ docker compose logs -f gitwarden
 
 Compose 配置使用项目目录的 `.env`、名为 `gitwarden-data` 的 named volume，以及 `127.0.0.1:8080`。默认镜像在本地构建为 `gitwarden:local`，Compose 会按主机架构自动选择 amd64 或 arm64。容器以 UID/GID `10001` 运行，应用数据库、档案、凭据和临时工作数据都在 `/data` 下。
 
-发布镜像在对应的 `vYYYYMMDD.N` 发布 tag 通过 CI 后推送到 `ghcr.io/xjoker/gitwarden`，每次发布推送版本 tag（不带 `v`，例如 `20261016.1`）和 `latest`。如需使用发布镜像，可设置 `GW_IMAGE` 并跳过本地构建：
+发布镜像在对应的 `vYYYYMMDD.N` 发布 tag 通过 CI 后推送到 `ghcr.io/xjoker/gitwarden`，每次发布推送版本 tag（不带 `v`，例如 `20261019.2`）和 `latest`。如需使用发布镜像，可设置 `GW_IMAGE` 并跳过本地构建：
 
 ```bash
-GW_IMAGE=ghcr.io/xjoker/gitwarden:20261016.1 docker compose pull
-GW_IMAGE=ghcr.io/xjoker/gitwarden:20261016.1 docker compose up -d --no-build
+GW_IMAGE=ghcr.io/xjoker/gitwarden:20261019.2 docker compose pull
+GW_IMAGE=ghcr.io/xjoker/gitwarden:20261019.2 docker compose up -d --no-build
 ```
 
-可用版本和发布说明见 [Releases](https://github.com/xjoker/GitWarden/releases)。
+发布说明见 [CHANGELOG.md](CHANGELOG.md)，已发布的版本 tag 见 [容器包页面](https://github.com/xjoker/GitWarden/pkgs/container/gitwarden)。
 
 普通 Docker 部署见 [Deployment](docs/wiki/Deployment.md)；配置、数据卷备份和恢复见 [Wiki 源文件索引](docs/wiki/Home.md)。
 
 ### 监听地址
 
-> **升级说明：** 直接运行时（`python -m gitwarden`、systemd，或者不基于本仓库 `Dockerfile` 的自制镜像），GitWarden 现在只监听 `127.0.0.1`。之前的版本总是监听 `0.0.0.0`。同一台宿主机上从容器里访问直接运行实例的情况（例如通过 `172.17.0.1`）也会受影响。如果需要重新让其他机器访问，请设置 `GW_HOST=0.0.0.0`，或在 `gitwarden.toml` 的 `[server]` 下写 `host = "0.0.0.0"`，最好放在防火墙或反向代理之后。
+> **升级说明：** 直接运行时（`python -m gitwarden`、systemd，或者不基于本仓库 `Dockerfile` 的自制镜像），从 20261019.2 起，GitWarden 只监听 `127.0.0.1`。更早的版本（20261019.1 及之前）总是监听 `0.0.0.0`，并且会忽略 `GW_HOST` 和 `[server] host`。同一台宿主机上从容器里访问直接运行实例的情况（例如通过 `172.17.0.1`）也会受影响。如果需要重新让其他机器访问，请设置 `GW_HOST=0.0.0.0`，或在 `gitwarden.toml` 的 `[server]` 下写 `host = "0.0.0.0"`，最好放在防火墙或反向代理之后。
 
 官方镜像和 Compose 不受影响（`--network host` 除外，见下文）：镜像设置了 `GW_DEFAULT_HOST=0.0.0.0`，容器内仍监听所有接口；Compose 默认在宿主机上只把端口发布到 `127.0.0.1`（`GW_BIND`）。显式设置的 `GW_HOST` 或 `[server] host` 总是优先于镜像默认值。
 
-使用 `--network host`（Compose 中为 `network_mode: host`）时，镜像会监听宿主机的所有网卡，`GW_BIND` 和 `--publish` 都不起作用。要收窄监听范围，请在挂载的 `gitwarden.toml` 的 `[server]` 下写 `host = "127.0.0.1"`，或设置 `GW_HOST=127.0.0.1`。详见 [Listen address](docs/wiki/Configuration.md#listen-address)。
+对外暴露范围由端口映射决定，而不是由应用决定：使用 `docker run` 时，要在映射里写上 `127.0.0.1`（`-p 127.0.0.1:8080:8080`）才能只开在本机。不写地址的 `-p 8080:8080` 会发布到所有 IPv4 和 IPv6 接口，而且 Docker 发布的端口会绕过 ufw 等宿主机防火墙规则（请在 `DOCKER-USER` 链中过滤，或者只发布到指定地址）。`GW_BIND` 只是 Compose 的端口映射变量：在 `docker run` 中（即使用了 `-e GW_BIND=…` 或 `--env-file .env`）以及 `--network host` / `network_mode: host` 下都不起作用。
+
+使用 `--network host`（Compose 中为 `network_mode: host`）时，镜像会监听宿主机的所有网卡，`GW_BIND` 和 `--publish` 都不起作用。要收窄监听范围，请在挂载的 `gitwarden.toml` 的 `[server]` 下写 `host = "127.0.0.1"`，或设置 `GW_HOST=127.0.0.1`。这两个设置从 20261019.2 镜像起才生效；更早的镜像（20261019.1、20261016.1）会忽略它们，在 `--network host` 下总是监听宿主机所有网卡，所以请使用 20261019.2 或更新的版本。详见 [Listen address](docs/wiki/Configuration.md#listen-address)。
 
 ## 创建第一个备份
 

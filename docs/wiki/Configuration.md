@@ -34,10 +34,10 @@ Compose also reads these project-environment values:
 
 | Variable | Used by | Meaning |
 | --- | --- | --- |
-| `GW_BIND` | Compose | Host address for the WebUI port mapping; defaults to `127.0.0.1`. |
+| `GW_BIND` | Compose | Host address for the WebUI port mapping in `compose.yml`; defaults to `127.0.0.1`. No effect with `docker run` or host networking. |
 | `GW_IMAGE` | Compose | Image name. Defaults to the local `gitwarden:local` build. |
 
-`GW_BIND` and `GW_IMAGE` are Compose interpolation inputs, not application settings. Docker Compose loads `.env` in the project directory; the Python application does not automatically load that file. With plain Docker, pass the file, a plaintext file on disk, using `--env-file .env` or export the variables yourself.
+`GW_BIND` and `GW_IMAGE` are Compose interpolation inputs, not application settings. `GW_BIND` only fills in the host address of the port mapping in `compose.yml`; the application never reads it, so it has no effect with `docker run` (even with `-e GW_BIND=…` or `--env-file .env`) or with `--network host` / `network_mode: host`. Docker Compose loads `.env` in the project directory; the Python application does not automatically load that file. With plain Docker, pass the file, a plaintext file on disk, using `--env-file .env` or export the variables yourself.
 
 ## Listen address
 
@@ -53,14 +53,14 @@ An empty `GW_HOST` or `GW_DEFAULT_HOST` counts as unset. Each value must be an I
 `"::"` listens on IPv6 only: IPv4 clients, including `127.0.0.1` and the Docker healthcheck, are refused.
 
 - **Run directly** (`python -m gitwarden`, systemd, a process manager): GitWarden listens on `127.0.0.1` and is reachable from the same machine only.
-- **Official image, Compose, or `docker run` with the default bridge network**: the application listens on `0.0.0.0` inside the container, which published ports require. Host exposure is controlled by the port mapping (`GW_BIND` in Compose, `--publish 127.0.0.1:8080:8080` with plain Docker). Do not set `GW_HOST` or `[server] host` to `127.0.0.1` in a container: the published port stops answering.
-- **`--network host` (Compose: `network_mode: host`)**: the container shares the host's network, so there is no port mapping. The image default `0.0.0.0` then listens on **every host interface**, and `GW_BIND` and `--publish` have no effect. To restrict it, set `host = "127.0.0.1"` (or one interface address) under `[server]` in the mounted `gitwarden.toml`, or pass `GW_HOST=127.0.0.1`. Here `127.0.0.1` is the host's loopback, so it does not break access from the host.
+- **Official image, Compose, or `docker run` with the default bridge network**: the application listens on `0.0.0.0` inside the container, which published ports require. Host exposure is controlled by the port mapping (`GW_BIND` in Compose, `--publish 127.0.0.1:8080:8080` with plain Docker). With plain Docker, the mapping must include `127.0.0.1` to stay local: `-p 8080:8080` without an address publishes on every IPv4 and IPv6 interface (`0.0.0.0` and `[::]`), and ports published by Docker bypass host firewall rules such as ufw or firewalld (filter in the `DOCKER-USER` chain or publish on a specific address). Do not set `GW_HOST` or `[server] host` to `127.0.0.1` in a container: the published port stops answering.
+- **`--network host` (Compose: `network_mode: host`)**: the container shares the host's network, so there is no port mapping. The image default `0.0.0.0` then listens on **every host interface**, and `GW_BIND` and `--publish` have no effect. To restrict it, set `host = "127.0.0.1"` (or one interface address) under `[server]` in the mounted `gitwarden.toml`, or pass `GW_HOST=127.0.0.1`. Here `127.0.0.1` is the host's loopback, so it does not break access from the host. `GW_HOST` and `[server] host` are honored starting with image 20261019.2; earlier images (20261019.1, 20261016.1) ignore them and always listen on every host interface, so use 20261019.2 or later.
 
 `GW_BIND` and `GW_HOST` are different settings: `GW_BIND` is the host-side address of the Compose port mapping; `GW_HOST` is the address the application itself listens on.
 
 ### Upgrading from earlier versions
 
-Earlier versions always listened on `0.0.0.0` and had no listen-address setting. After upgrading:
+Versions up to and including 20261019.1 always listened on `0.0.0.0` and ignored `GW_HOST` and `[server] host`; the listen-address settings take effect starting with 20261019.2. After upgrading:
 
 - **Affected:** deployments that run GitWarden directly, or in a custom image or entrypoint that does not use this repository's `Dockerfile`, and are reached from another machine, from another network namespace on the same host (for example a reverse proxy, monitor, or uptime probe running in a container that connects to `172.17.0.1` or `host.docker.internal`), or, for a custom image, through a published port. They now listen on `127.0.0.1` only. `ss -ltnp | grep 8080` shows `127.0.0.1:8080` in that case. For containers on the same host, either set `GW_HOST` to the Docker bridge address (for example `172.17.0.1`; the bridge must exist before GitWarden starts) or set `GW_HOST=0.0.0.0` and block outside access with a firewall.
 - **Not affected:** the official image, images built `FROM` it, and the repository's Compose file. With `--network host` the image listens on every host interface, as before; see above to restrict it.
