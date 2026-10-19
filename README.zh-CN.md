@@ -10,7 +10,7 @@ GitWarden 是一个自托管的 Git 历史镜像工具。它按计划把来源�
 
 ![终端演示：历史仓离线时来源被强推，主镜像整体暂停更新，旧 commit 仍被保全](docs/demo.gif)
 
-*演示（约 50 秒，使用本地裸仓库，终端界面为英文）：GitWarden 先完成一次镜像；随后历史仓拒绝推送，来源对 `main` 执行 force push、对 `dev` 正常快进。安全门禁让整个主镜像暂停更新（两个分支都不推送），旧的 `main` commit 以 `refs/preserved/<ULID>` 留在本地档案；历史仓恢复后，先确认保全标签，再让主镜像追上来源。录屏中的 `gwctl` 是演示用的辅助脚本，提交的是与备份向导和 **Run** 按钮相同的 WebUI 表单；GitWarden 本身不提供 CLI。*
+*演示（约 50 秒，使用本地裸仓库，终端界面为英文）：GitWarden 先完成一次镜像；随后历史仓拒绝推送，来源对 `main` 执行 force push、对 `dev` 正常快进。安全门禁让整个主镜像暂停更新（两个分支都不推送），旧的 `main` commit 以 `refs/preserved/<ULID>` 留在本地档案；历史仓恢复后，先确认保全标签，再让主镜像追上来源。录屏中的 `gwctl` 是演示用的辅助脚本，提交的是与备份向导和 **Run now** 按钮相同的 WebUI 表单；GitWarden 本身不提供 CLI。*
 
 ![GitWarden 总览](docs/images/overview.jpg)
 
@@ -38,11 +38,13 @@ GitWarden 修改主镜像上已有的 ref 之前，会先经过安全门禁。�
 不想先获取源码时，可以直接运行发布镜像：使用单独的数据卷、只绑定本机回环地址的端口，日志轮转与 Compose 相同。然后打开 <http://127.0.0.1:8080>：
 
 ```bash
-read -rsp 'GitWarden admin password: ' GW_ADMIN_PASSWORD && echo && export GW_ADMIN_PASSWORD
+stty -echo; printf 'GitWarden admin password: '; IFS= read -r GW_ADMIN_PASSWORD; stty echo; echo
+export GW_ADMIN_PASSWORD
 docker run -d --name gitwarden-trial --restart unless-stopped -e GW_ADMIN_PASSWORD -p 127.0.0.1:8080:8080 -v gitwarden-trial-data:/data --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 ghcr.io/xjoker/gitwarden:20261016.1
+unset GW_ADMIN_PASSWORD
 ```
 
-`read -rs` 让密码不进入 shell 历史，不带值的 `-e GW_ADMIN_PASSWORD` 会从当前环境传入密码。GitWarden 只从环境变量 `GW_ADMIN_PASSWORD` 读取密码，所以无论用 `-e` 还是 `--env-file` 传入，能访问 Docker daemon 的人都可以用 `docker inspect` 看到它。按 [Deployment](docs/wiki/Deployment.md#plain-docker) 使用权限为 600 的环境变量文件加 `--env-file`，同样可以避免密码进入 shell 历史。不要把端口发布到公网接口，见 [Security](SECURITY.md)。
+第一行在 bash 和 zsh 中都能运行：`stty -echo` 让输入不回显，`read` 让密码不进入 shell 历史。不带值的 `-e GW_ADMIN_PASSWORD` 会从当前环境传入密码，之后的 `unset` 会把它从当前 shell 中清除。如果通过 `sudo` 运行 Docker，请用 `sudo --preserve-env=GW_ADMIN_PASSWORD docker run …`：普通 `sudo` 会丢掉这个变量，容器会拒绝启动。不要用 `sudo -E`，它会把整套环境交给 root，包括 `DOCKER_HOST`、`DOCKER_CONTEXT` 和代理设置。GitWarden 只从环境变量 `GW_ADMIN_PASSWORD` 读取密码，所以无论用 `-e` 还是 `--env-file` 传入，能访问 Docker daemon 的人都可以用 `docker inspect` 看到它。按 [Deployment](docs/wiki/Deployment.md#plain-docker) 使用权限为 600 的环境变量文件加 `--env-file`，同样可以避免密码进入 shell 历史，但它是存在磁盘上的明文文件。不要把端口发布到公网接口，见 [Security](SECURITY.md)。
 
 试用容器使用数据卷 `gitwarden-trial-data`，与 Compose 的 `gitwarden-data` 分开，但端口同样是 8080。启动 Compose 前先执行 `docker rm -f gitwarden-trial`；不再需要试用数据时，用 `docker volume rm gitwarden-trial-data` 删除。
 

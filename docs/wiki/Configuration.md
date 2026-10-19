@@ -30,7 +30,7 @@ Compose also reads these project-environment values:
 | `GW_BIND` | Compose | Host address for the WebUI port mapping; defaults to `127.0.0.1`. |
 | `GW_IMAGE` | Compose | Image name. Defaults to the local `gitwarden:local` build. |
 
-`GW_BIND` and `GW_IMAGE` are Compose interpolation inputs, not application settings. Docker Compose loads `.env` in the project directory; the Python application does not automatically load that file. With plain Docker, pass the file using `--env-file .env` or export the variables yourself.
+`GW_BIND` and `GW_IMAGE` are Compose interpolation inputs, not application settings. Docker Compose loads `.env` in the project directory; the Python application does not automatically load that file. With plain Docker, pass the file, a plaintext file on disk, using `--env-file .env` or export the variables yourself.
 
 ## TOML settings
 

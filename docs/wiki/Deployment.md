@@ -46,7 +46,7 @@ Choose an existing version from [Releases](https://github.com/xjoker/GitWarden/r
 
 ## Plain Docker
 
-Use a named volume and the same environment file when Compose is not desired:
+Use a named volume and the same environment file, a plaintext file on disk, when Compose is not desired:
 
 ```bash
 docker build --build-arg GIT_COMMIT="$(git rev-parse HEAD)" -t gitwarden:local .

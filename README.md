@@ -8,7 +8,7 @@ English · [简体中文](README.zh-CN.md)
 
 ![Terminal demo: a force push while the history repository is offline holds the main mirror, and the old commit stays preserved](docs/demo.gif)
 
-*Demo (about 50 seconds, local bare repositories): GitWarden mirrors a source; the history repository then rejects pushes and the source force-pushes `main` and fast-forwards `dev`. The safety gate holds the whole main mirror (both branches), the old `main` commit stays in the local archive as `refs/preserved/<ULID>`, and once the history repository accepts pushes again the preservation tag is confirmed first and the mirror catches up. `gwctl` in the recording is a small demo helper script that submits the same WebUI forms as the backup wizard and the **Run** button; GitWarden does not ship a CLI.*
+*Demo (about 50 seconds, local bare repositories): GitWarden mirrors a source; the history repository then rejects pushes and the source force-pushes `main` and fast-forwards `dev`. The safety gate holds the whole main mirror (both branches), the old `main` commit stays in the local archive as `refs/preserved/<ULID>`, and once the history repository accepts pushes again the preservation tag is confirmed first and the mirror catches up. `gwctl` in the recording is a small demo helper script that submits the same WebUI forms as the backup wizard and the **Run now** button; GitWarden does not ship a CLI.*
 
 ![GitWarden overview](docs/images/overview.jpg)
 
@@ -36,11 +36,13 @@ The history repository is not a second full mirror. It contains preserved versio
 For a quick trial without a checkout, run the published image with its own data volume, a loopback-only port, and the same log rotation as Compose, then open <http://127.0.0.1:8080>:
 
 ```bash
-read -rsp 'GitWarden admin password: ' GW_ADMIN_PASSWORD && echo && export GW_ADMIN_PASSWORD
+stty -echo; printf 'GitWarden admin password: '; IFS= read -r GW_ADMIN_PASSWORD; stty echo; echo
+export GW_ADMIN_PASSWORD
 docker run -d --name gitwarden-trial --restart unless-stopped -e GW_ADMIN_PASSWORD -p 127.0.0.1:8080:8080 -v gitwarden-trial-data:/data --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 ghcr.io/xjoker/gitwarden:20261016.1
+unset GW_ADMIN_PASSWORD
 ```
 
-`read -rs` keeps the password out of your shell history, and `-e GW_ADMIN_PASSWORD` without a value passes it from the environment. GitWarden reads the password only from the `GW_ADMIN_PASSWORD` environment variable, so anyone who can access the Docker daemon can read it with `docker inspect`, whether it is passed with `-e` or `--env-file`. An environment file with mode 600 and `--env-file`, as shown in [Deployment](docs/wiki/Deployment.md#plain-docker), also keeps it out of shell history. Do not publish the port on a public interface; see [Security](SECURITY.md).
+The first line works in bash and zsh: `stty -echo` hides what you type, and `read` keeps the password out of your shell history. `-e GW_ADMIN_PASSWORD` without a value passes it from the environment, and `unset` removes it from your shell afterwards. If you run Docker through `sudo`, use `sudo --preserve-env=GW_ADMIN_PASSWORD docker run …`: plain `sudo` drops the variable and the container refuses to start. Avoid `sudo -E`, which hands your whole environment to root, including `DOCKER_HOST`, `DOCKER_CONTEXT` and proxy settings. GitWarden reads the password only from the `GW_ADMIN_PASSWORD` environment variable, so anyone who can access the Docker daemon can read it with `docker inspect`, whether it is passed with `-e` or `--env-file`. An environment file with mode 600 and `--env-file`, as shown in [Deployment](docs/wiki/Deployment.md#plain-docker), also keeps it out of shell history, but it is a plaintext file on disk. Do not publish the port on a public interface; see [Security](SECURITY.md).
 
 The trial uses the volume `gitwarden-trial-data`, separate from Compose's `gitwarden-data`, but the same port 8080. Remove it with `docker rm -f gitwarden-trial` before starting Compose, and delete its data with `docker volume rm gitwarden-trial-data` once you no longer need it.
 
