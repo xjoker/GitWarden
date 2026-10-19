@@ -19,7 +19,7 @@ button,.btn{display:inline-flex;align-items:center;justify-content:center;gap:8p
 </head>
 <body><div class="layout">
 <nav class="sidebar" aria-label="{{ t('common.main_nav') }}">
-<div class="brand"><svg width="28" height="28" fill="none" stroke="#5FC4A8" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" aria-hidden="true" viewBox="0 0 24 24"><path d="M13.9 3.13 12 2.5 7.5 4 5 6.5V12c0 4.25 2.75 7.5 7 9.5 4.25-2 7-5.25 7-9.5v1"/><path d="M10 7.5V15m8-9c0 4-2.5 7-6.5 7H10"/><circle cx="10" cy="7.5" r="2" fill="#5FC4A8" stroke="none"/><circle cx="10" cy="15" r="2" fill="#5FC4A8" stroke="none"/><circle cx="18" cy="6" r="2.75" fill="#FFF" stroke="none"/></svg>GitWarden</div>
+<div class="brand"><svg width="28" height="28" fill="none" stroke="#5FC4A8" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" aria-hidden="true" viewBox="0 0 24 24"><path d="M13.9 3.13 12 2.5 7.5 4 5 6.5V12c0 4.25 2.75 7.5 7 9.5 4.25-2 7-5.25 7-9.5v1"/><path d="M10 7.5V15m8-9c0 4-2.5 7-6.5 7H10"/><circle cx="10" cy="7.5" r="2" fill="#5FC4A8" stroke="none"/><circle cx="10" cy="15" r="2" fill="#5FC4A8" stroke="none"/><circle cx="18" cy="6" r="2.75" fill="#A5E9D6" stroke="none"/></svg>GitWarden</div>
 {% if request.cookies.get('gw_session') in request.app.state.sessions %}
 <div class="nav">
 {% for path,key in [('/', 'overview'),('/tasks','tasks'),('/logs','logs'),('/platforms','platforms'),('/creds','credentials')] %}
