@@ -48,11 +48,11 @@ For a quick trial without a checkout, run the published image with its own data 
 ```bash
 stty -echo; printf 'GitWarden admin password: '; IFS= read -r GW_ADMIN_PASSWORD; stty echo; echo
 export GW_ADMIN_PASSWORD
-docker run -d --name gitwarden-trial --restart unless-stopped -e GW_ADMIN_PASSWORD -p 127.0.0.1:8080:8080 -v gitwarden-trial-data:/data --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 ghcr.io/xjoker/gitwarden:20261016.1
+docker run -d --name gitwarden-trial --restart unless-stopped -e GW_ADMIN_PASSWORD -p 127.0.0.1:8080:8080 -v gitwarden-trial-data:/data --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 ghcr.io/xjoker/gitwarden:20261019.2
 unset GW_ADMIN_PASSWORD
 ```
 
-The first line works in bash and zsh: `stty -echo` hides what you type, and `read` keeps the password out of your shell history. `-e GW_ADMIN_PASSWORD` without a value passes it from the environment, and `unset` removes it from your shell afterwards. If you run Docker through `sudo`, use `sudo --preserve-env=GW_ADMIN_PASSWORD docker run …`: plain `sudo` drops the variable and the container refuses to start. Avoid `sudo -E`, which hands your whole environment to root, including `DOCKER_HOST`, `DOCKER_CONTEXT` and proxy settings. GitWarden reads the password only from the `GW_ADMIN_PASSWORD` environment variable, so anyone who can access the Docker daemon can read it with `docker inspect`, whether it is passed with `-e` or `--env-file`. An environment file with mode 600 and `--env-file`, as shown in [Deployment](docs/wiki/Deployment.md#plain-docker), also keeps it out of shell history, but it is a plaintext file on disk. Do not publish the port on a public interface; see [Security](SECURITY.md).
+The first line works in bash and zsh: `stty -echo` hides what you type, and `read` keeps the password out of your shell history. `-e GW_ADMIN_PASSWORD` without a value passes it from the environment, and `unset` removes it from your shell afterwards. If you run Docker through `sudo`, use `sudo --preserve-env=GW_ADMIN_PASSWORD docker run …`: plain `sudo` drops the variable and the container refuses to start. Avoid `sudo -E`, which hands your whole environment to root, including `DOCKER_HOST`, `DOCKER_CONTEXT` and proxy settings. GitWarden reads the password only from the `GW_ADMIN_PASSWORD` environment variable, so anyone who can access the Docker daemon can read it with `docker inspect`, whether it is passed with `-e` or `--env-file`. An environment file with mode 600 and `--env-file`, as shown in [Deployment](docs/wiki/Deployment.md#plain-docker), also keeps it out of shell history, but it is a plaintext file on disk. Do not publish the port on a public interface; see [Security](SECURITY.md). Keep the `127.0.0.1:` prefix in `-p 127.0.0.1:8080:8080`: `-p 8080:8080` without an address publishes the port on every IPv4 and IPv6 interface (`0.0.0.0` and `[::]`), and ports published by Docker bypass host firewall rules such as ufw.
 
 The trial uses the volume `gitwarden-trial-data`, separate from Compose's `gitwarden-data`, but the same port 8080. Remove it with `docker rm -f gitwarden-trial` before starting Compose, and delete its data with `docker volume rm gitwarden-trial-data` once you no longer need it.
 
@@ -79,24 +79,26 @@ docker compose logs -f gitwarden
 
 The Compose configuration uses the project `.env`, the named volume `gitwarden-data`, and `127.0.0.1:8080`. The default image is built locally as `gitwarden:local`; Compose selects the host architecture automatically. The container runs as UID/GID `10001` and stores the application database, archives, credentials, and temporary work data under `/data`.
 
-Release images are published to `ghcr.io/xjoker/gitwarden` after their `vYYYYMMDD.N` release tag passes CI. Each release pushes the version without the `v` (for example `20261016.1`) and `latest`. To run a published image, set `GW_IMAGE` and pull without rebuilding:
+Release images are published to `ghcr.io/xjoker/gitwarden` after their `vYYYYMMDD.N` release tag passes CI. Each release pushes the version without the `v` (for example `20261019.2`) and `latest`. To run a published image, set `GW_IMAGE` and pull without rebuilding:
 
 ```bash
-GW_IMAGE=ghcr.io/xjoker/gitwarden:20261016.1 docker compose pull
-GW_IMAGE=ghcr.io/xjoker/gitwarden:20261016.1 docker compose up -d --no-build
+GW_IMAGE=ghcr.io/xjoker/gitwarden:20261019.2 docker compose pull
+GW_IMAGE=ghcr.io/xjoker/gitwarden:20261019.2 docker compose up -d --no-build
 ```
 
-See [Releases](https://github.com/xjoker/GitWarden/releases) for available versions and release notes.
+See [CHANGELOG.md](CHANGELOG.md) for release notes, and the [container package](https://github.com/xjoker/GitWarden/pkgs/container/gitwarden) for the published version tags.
 
 For a non-Compose deployment, see [Deployment](docs/wiki/Deployment.md). For configuration, persistent-volume backups, and recovery, see the [Wiki source index](docs/wiki/Home.md).
 
 ### Listen address
 
-> **Upgrade note:** when started directly (`python -m gitwarden`, systemd, or a custom image without this repository's `Dockerfile`), GitWarden now listens on `127.0.0.1` only. Earlier versions always listened on `0.0.0.0`. This also affects containers on the same host that connect to a directly run instance (for example through `172.17.0.1`). To accept connections from other machines again, set `GW_HOST=0.0.0.0` or `host = "0.0.0.0"` under `[server]` in `gitwarden.toml`, preferably behind a firewall or reverse proxy.
+> **Upgrade note:** when started directly (`python -m gitwarden`, systemd, or a custom image without this repository's `Dockerfile`), GitWarden listens on `127.0.0.1` only starting with 20261019.2. Earlier versions (20261019.1 and before) always listened on `0.0.0.0` and ignored `GW_HOST` and `[server] host`. This also affects containers on the same host that connect to a directly run instance (for example through `172.17.0.1`). To accept connections from other machines again, set `GW_HOST=0.0.0.0` or `host = "0.0.0.0"` under `[server]` in `gitwarden.toml`, preferably behind a firewall or reverse proxy.
 
 The official image and the Compose file are not affected (except with `--network host`, see below): the image sets `GW_DEFAULT_HOST=0.0.0.0`, so the application still listens on all interfaces inside the container, and Compose publishes the port by default on `127.0.0.1` on the host (`GW_BIND`). An explicit `GW_HOST` or `[server] host` always wins over that image default.
 
-With `--network host` (Compose: `network_mode: host`), the image listens on every host interface, and `GW_BIND` and `--publish` have no effect. Set `host = "127.0.0.1"` under `[server]` in the mounted `gitwarden.toml`, or `GW_HOST=127.0.0.1`, to restrict it. See [Listen address](docs/wiki/Configuration.md#listen-address).
+Host exposure is decided by the port mapping, not by the application: with `docker run`, keep `127.0.0.1` in the mapping (`-p 127.0.0.1:8080:8080`) to stay local. `-p 8080:8080` without an address publishes on every IPv4 and IPv6 interface, and Docker-published ports bypass host firewall rules such as ufw (filter in the `DOCKER-USER` chain or publish on a specific address instead). `GW_BIND` is only a Compose port-mapping variable: it has no effect with `docker run` (even with `-e GW_BIND=…` or `--env-file .env`) or with `--network host` / `network_mode: host`.
+
+With `--network host` (Compose: `network_mode: host`), the image listens on every host interface, and `GW_BIND` and `--publish` have no effect. Set `host = "127.0.0.1"` under `[server]` in the mounted `gitwarden.toml`, or `GW_HOST=127.0.0.1`, to restrict it. Both settings are honored starting with image 20261019.2; earlier images (20261019.1, 20261016.1) ignore them and always listen on every host interface with `--network host`, so use 20261019.2 or later. See [Listen address](docs/wiki/Configuration.md#listen-address).
 
 ## Create the first backup
 

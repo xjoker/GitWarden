@@ -26,7 +26,7 @@ Compose reads the project `.env` for interpolation and container environment. Th
 - host binding `127.0.0.1:8080:8080`;
 - automatic host architecture selection for amd64 or arm64.
 
-The default binding is local-only. To allow access from a controlled network interface, set `GW_BIND` in `.env` to the exact host address you intend to expose and apply the corresponding firewall policy. Inside the container the application listens on `0.0.0.0` because the image sets `GW_DEFAULT_HOST=0.0.0.0`; do not set `GW_HOST` in `.env` for this purpose (see [Listen address](Configuration.md#listen-address)). With `--network host` or `network_mode: host` there is no port mapping: the application listens on every host interface, and `GW_BIND` and `--publish` have no effect. Restrict it with `host = "127.0.0.1"` under `[server]` in the mounted TOML or with `GW_HOST=127.0.0.1`. `GW_PORT` defaults to 8080 and changes both the application port and the Compose port mapping. For plain Docker, update `--publish` to match when changing this value.
+The default binding is local-only. To allow access from a controlled network interface, set `GW_BIND` in `.env` to the exact host address you intend to expose and apply the corresponding firewall policy. Inside the container the application listens on `0.0.0.0` because the image sets `GW_DEFAULT_HOST=0.0.0.0`; do not set `GW_HOST` in `.env` for this purpose (see [Listen address](Configuration.md#listen-address)). `GW_BIND` is read only by Compose for the port mapping; it has no effect with `docker run` or with host networking. With `--network host` or `network_mode: host` there is no port mapping: the application listens on every host interface, and `GW_BIND` and `--publish` have no effect. Restrict it with `host = "127.0.0.1"` under `[server]` in the mounted TOML or with `GW_HOST=127.0.0.1`. Both are honored starting with image 20261019.2; earlier images ignore them and always listen on every host interface. `GW_PORT` defaults to 8080 and changes both the application port and the Compose port mapping. For plain Docker, update `--publish` to match when changing this value.
 
 Open <http://127.0.0.1:8080>, sign in, and complete [Getting started](Getting-started.md).
 
@@ -37,12 +37,12 @@ Release images are made available after a `vYYYYMMDD.N` tag, matching `VERSION`,
 Pull and start a published version without a local build:
 
 ```bash
-GW_IMAGE=ghcr.io/xjoker/gitwarden:20261016.1 docker compose pull
-GW_IMAGE=ghcr.io/xjoker/gitwarden:20261016.1 docker compose up -d --no-build
+GW_IMAGE=ghcr.io/xjoker/gitwarden:20261019.2 docker compose pull
+GW_IMAGE=ghcr.io/xjoker/gitwarden:20261019.2 docker compose up -d --no-build
 curl --fail http://127.0.0.1:8080/health
 ```
 
-Choose an existing version from [Releases](https://github.com/xjoker/GitWarden/releases). Do not mix a local build and a release image in the same verification step; check `/health` after the container is recreated.
+Choose an existing version from the [container package](https://github.com/xjoker/GitWarden/pkgs/container/gitwarden); release notes are in [CHANGELOG.md](https://github.com/xjoker/GitWarden/blob/main/CHANGELOG.md). Use 20261019.2 or later if you rely on `GW_HOST` or `[server] host`. Do not mix a local build and a release image in the same verification step; check `/health` after the container is recreated.
 
 ## Plain Docker
 
@@ -60,6 +60,8 @@ docker run -d \
   gitwarden:local
 curl --fail http://127.0.0.1:8080/health
 ```
+
+Keep the `127.0.0.1:` prefix in `--publish` to stay local. `--publish 8080:8080` without an address publishes on every IPv4 and IPv6 interface (`0.0.0.0` and `[::]`), and ports published by Docker bypass host firewall rules such as ufw or firewalld; to expose GitWarden on purpose, publish on one specific address, or filter in the `DOCKER-USER` chain, preferably behind a reverse proxy. `GW_BIND` in the `.env` file has no effect here: only the `--publish` address decides host exposure.
 
 `docker volume create` is a one-time command. The container must retain write access to `/data`; the image's application user is UID/GID `10001`. If a bind mount is used instead of the named volume, create the directory first and assign it to `10001:10001`.
 
