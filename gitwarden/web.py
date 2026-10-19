@@ -51,6 +51,15 @@ log = logging.getLogger("gitwarden")
 
 SESSION_COOKIE = "gw_session"
 TEMPLATES_DIR = Path(__file__).with_name("templates")
+STATIC_DIR = Path(__file__).with_name("static")
+# 浏览器图标：固定白名单，登录前即可访问，不经过会话校验。
+ICON_FILES = {
+    "/favicon.ico": ("favicon.ico", "image/x-icon"),
+    "/favicon.svg": ("favicon.svg", "image/svg+xml"),
+    "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
+}
+# URL 不带版本号，所以缓存一天、不用 immutable。
+ICON_HEADERS = {"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"}
 _ALL_ROWS = 2**31 - 1
 
 STATUS_LABELS = {
@@ -658,6 +667,16 @@ def _find_event(store: Store, task_id: int, event_id: int) -> dict | None:
     return None
 
 
+def _icon_route(name: str, media_type: str):
+    """返回只提供一个固定图标文件的无参数路由。"""
+    path = STATIC_DIR / name
+
+    def icon() -> FileResponse:
+        return FileResponse(path, media_type=media_type, headers=ICON_HEADERS)
+
+    return icon
+
+
 def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
     configure_delete_guard(
         DeleteGuard(
@@ -752,6 +771,11 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
             "version": request.app.state.version,
             "git_commit": os.environ.get("GW_GIT_COMMIT") or "unknown",
         }
+
+    for icon_path, (icon_name, icon_type) in ICON_FILES.items():
+        app.add_api_route(
+            icon_path, _icon_route(icon_name, icon_type), methods=["GET"], include_in_schema=False
+        )
 
     # 登录与退出
     @app.get("/login", response_class=HTMLResponse)
