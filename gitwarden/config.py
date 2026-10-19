@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import ipaddress
+import logging
 import os
+import re
+import socket
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -16,6 +20,7 @@ class ConfigError(Exception):
 @dataclass(frozen=True)
 class Config:
     data_dir: Path
+    host: str = "127.0.0.1"
     port: int = 8080
     tick_seconds: float = 30
     workers: int = 2
@@ -37,6 +42,56 @@ def _read_toml(path: Path) -> dict:
             return tomllib.load(fh)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"配置文件格式错误 {path}: {exc}") from exc
+
+
+_HOSTNAME_LABEL = re.compile(r"(?!-)[A-Za-z0-9-]{1,63}(?<!-)")
+_HOST_HINT = "应填 IP 地址（如 127.0.0.1、0.0.0.0、::，IPv6 不加方括号）或主机名"
+
+
+def _check_host(value: str, where: str) -> str:
+    """启动前校验监听地址，报错时写明值来自哪里（环境变量还是 TOML）。
+
+    接受 IPv4/IPv6 字面量和普通主机名；拒绝空白、方括号、通配符 `*`，以及
+    `0`、`127.1` 这类会被系统解析成 IP 的数字简写（`0` 实际等于 0.0.0.0）。
+    """
+    try:
+        ipaddress.ip_address(value)
+        return value
+    except ValueError:
+        pass
+    labels = value[:-1].split(".") if value.endswith(".") else value.split(".")
+    is_hostname = len(value) <= 253 and all(_HOSTNAME_LABEL.fullmatch(x) for x in labels)
+    if is_hostname:
+        try:
+            socket.inet_aton(value)
+        except OSError:
+            return value
+    raise ConfigError(f"监听地址 {where} 无效: {value!r}，{_HOST_HINT}")
+
+
+def _host(env: Mapping[str, str], server: Mapping, config_path: Path) -> str:
+    """监听地址：GW_HOST > [server] host > GW_DEFAULT_HOST（镜像设为 0.0.0.0）> 127.0.0.1。"""
+    toml_where = f"配置文件 {config_path} 中的 [server] host"
+    toml_host = None
+    if "host" in server:
+        value = server["host"]
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"{toml_where} 必须是非空字符串: {value!r}")
+        toml_host = _check_host(value.strip(), toml_where)
+    raw = (env.get("GW_HOST") or "").strip()
+    if raw:
+        host = _check_host(raw, "环境变量 GW_HOST")
+        if toml_host is not None and toml_host != host:
+            logging.getLogger("gitwarden").warning(
+                "警告: 环境变量 GW_HOST=%s 覆盖了%s=%s", host, toml_where, toml_host
+            )
+        return host
+    if toml_host is not None:
+        return toml_host
+    fallback = (env.get("GW_DEFAULT_HOST") or "").strip()
+    if fallback:
+        return _check_host(fallback, "环境变量 GW_DEFAULT_HOST")
+    return "127.0.0.1"
 
 
 def _number(env: Mapping[str, str], key: str, fallback, cast):
@@ -119,6 +174,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         raise ConfigError("配置文件里的 [safety] 必须是一个表")
 
     port = _number(env, "GW_PORT", server.get("port", 8080), int)
+    host = _host(env, server, config_path)
     tick = _number(env, "GW_TICK_SECONDS", scheduler.get("tick_seconds", 30), float)
     workers = _number(env, "GW_WORKERS", scheduler.get("workers", 2), int)
     min_sync = _number(
@@ -163,6 +219,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     return _validate(
         Config(
             data_dir=data_dir,
+            host=host,
             port=port,
             tick_seconds=tick,
             workers=workers,

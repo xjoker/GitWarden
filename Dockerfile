@@ -18,6 +18,9 @@ RUN rm -rf /usr/local/lib/python3.14/site-packages/pip \
         /usr/local/lib/python3.14/site-packages/pip-*.dist-info \
         /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.14
 ENV TZ=UTC PYTHONUNBUFFERED=1 GW_DATA_DIR=/data
+# Listen on all interfaces inside the container so published ports work. This is a
+# default only: GW_HOST and [server] host in a mounted gitwarden.toml still win.
+ENV GW_DEFAULT_HOST=0.0.0.0
 ARG GIT_COMMIT=unknown
 ENV GW_GIT_COMMIT=$GIT_COMMIT
 RUN groupadd --system --gid 10001 gitwarden \

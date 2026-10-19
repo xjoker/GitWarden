@@ -16,7 +16,7 @@ def main() -> None:
     except ConfigError as exc:
         sys.exit(f"启动失败: {exc}")
     app = create_app(config)
-    uvicorn.run(app, host="0.0.0.0", port=config.port, workers=1)
+    uvicorn.run(app, host=config.host, port=config.port, workers=1)
 
 
 if __name__ == "__main__":

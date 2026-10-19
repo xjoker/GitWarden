@@ -26,7 +26,7 @@ Compose reads the project `.env` for interpolation and container environment. Th
 - host binding `127.0.0.1:8080:8080`;
 - automatic host architecture selection for amd64 or arm64.
 
-The default binding is local-only. To allow access from a controlled network interface, set `GW_BIND` in `.env` to the exact host address you intend to expose and apply the corresponding firewall policy. `GW_PORT` defaults to 8080 and changes both the application port and the Compose port mapping. For plain Docker, update `--publish` to match when changing this value.
+The default binding is local-only. To allow access from a controlled network interface, set `GW_BIND` in `.env` to the exact host address you intend to expose and apply the corresponding firewall policy. Inside the container the application listens on `0.0.0.0` because the image sets `GW_DEFAULT_HOST=0.0.0.0`; do not set `GW_HOST` in `.env` for this purpose (see [Listen address](Configuration.md#listen-address)). With `--network host` or `network_mode: host` there is no port mapping: the application listens on every host interface, and `GW_BIND` and `--publish` have no effect. Restrict it with `host = "127.0.0.1"` under `[server]` in the mounted TOML or with `GW_HOST=127.0.0.1`. `GW_PORT` defaults to 8080 and changes both the application port and the Compose port mapping. For plain Docker, update `--publish` to match when changing this value.
 
 Open <http://127.0.0.1:8080>, sign in, and complete [Getting started](Getting-started.md).
 

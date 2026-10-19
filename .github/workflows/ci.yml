@@ -83,6 +83,23 @@ jobs:
           build-args: |
             GIT_COMMIT=${{ github.sha }}
 
+      - name: Check the image's listen-address settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker image inspect gitwarden:ci --format '{{json .Config}}' > /tmp/image-config.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          config = json.loads(Path('/tmp/image-config.json').read_text())
+          env = config.get('Env') or []
+          # The image must default to 0.0.0.0 below the TOML, never force GW_HOST above it.
+          assert 'GW_DEFAULT_HOST=0.0.0.0' in env, env
+          assert not any(item.startswith('GW_HOST=') for item in env), env
+          command = json.dumps([config.get('Entrypoint'), config.get('Cmd')])
+          assert 'GW_HOST' not in command, command
+          PY
+
       - name: Start the built image and verify health and login
         shell: bash
         env:
