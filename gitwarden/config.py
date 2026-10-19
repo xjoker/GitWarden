@@ -51,15 +51,28 @@ _HOST_HINT = "应填 IP 地址（如 127.0.0.1、0.0.0.0、::，IPv6 不加方�
 def _check_host(value: str, where: str) -> str:
     """启动前校验监听地址，报错时写明值来自哪里（环境变量还是 TOML）。
 
-    接受 IPv4/IPv6 字面量和普通主机名；拒绝空白、方括号、通配符 `*`，以及
-    `0`、`127.1` 这类会被系统解析成 IP 的数字简写（`0` 实际等于 0.0.0.0）。
+    接受 IPv4/IPv6 字面量（含合法 zone id）和 RFC 1123 主机名；拒绝空白与控制
+    字符、方括号、通配符 `*`、IPv4 映射的 IPv6（`::ffff:…`）、末级标签为纯数字的
+    “主机名”，以及 `0`、`127.1` 这类会被系统解析成 IP 的数字简写。
     """
+    if any(ch.isspace() or ord(ch) < 32 for ch in value):
+        raise ConfigError(f"监听地址 {where} 无效: {value!r}，{_HOST_HINT}")
     try:
-        ipaddress.ip_address(value)
-        return value
+        ip = ipaddress.ip_address(value)
     except ValueError:
-        pass
+        ip = None
+    if ip is not None:
+        if ip.version == 6 and ip.ipv4_mapped is not None:
+            raise ConfigError(f"监听地址 {where} 无效: {value!r}，{_HOST_HINT}")
+        if "%" in value:
+            zone = value.rsplit("%", 1)[1]
+            if not re.fullmatch(r"[A-Za-z0-9_.-]+", zone):
+                raise ConfigError(f"监听地址 {where} 无效: {value!r}，{_HOST_HINT}")
+        return value
     labels = value[:-1].split(".") if value.endswith(".") else value.split(".")
+    # RFC 1123: the rightmost label of a hostname must not be all-numeric.
+    if not labels or labels[-1].isdigit():
+        raise ConfigError(f"监听地址 {where} 无效: {value!r}，{_HOST_HINT}")
     is_hostname = len(value) <= 253 and all(_HOSTNAME_LABEL.fullmatch(x) for x in labels)
     if is_hostname:
         try:
@@ -67,6 +80,33 @@ def _check_host(value: str, where: str) -> str:
         except OSError:
             return value
     raise ConfigError(f"监听地址 {where} 无效: {value!r}，{_HOST_HINT}")
+
+
+def healthcheck_url(env: Mapping[str, str] | None = None) -> str:
+    """Docker HEALTHCHECK 应探测的 URL：用实际生效的 host/port。
+
+    `0.0.0.0` / `::` 改连回环，否则按绑定地址连（含网卡 IP），避免 host 网络下
+    绑网卡 IP 时一直 unhealthy。
+    """
+    config = load_config(env)
+    host = config.host
+    if host in ("0.0.0.0", "::"):
+        host = "127.0.0.1"
+    if "%" in host:
+        addr, zone = host.rsplit("%", 1)
+        host_part = f"[{addr}%25{zone}]"
+    elif ":" in host:
+        host_part = f"[{host}]"
+    else:
+        host_part = host
+    return f"http://{host_part}:{config.port}/health"
+
+
+def probe_health(env: Mapping[str, str] | None = None, timeout: float = 3) -> None:
+    """供镜像 HEALTHCHECK 调用：连不上或非 2xx 时抛异常。"""
+    import urllib.request
+
+    urllib.request.urlopen(healthcheck_url(env), timeout=timeout).read()
 
 
 def _host(env: Mapping[str, str], server: Mapping, config_path: Path) -> str:

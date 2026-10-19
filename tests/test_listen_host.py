@@ -68,8 +68,33 @@ def test_invalid_toml_host_is_rejected(tmp_path: Path, literal: str) -> None:
         load_config(_env(tmp_path, f"[server]\nhost = {literal}\n"))
 
 
-BAD_HOSTS = ["not a host!", "[::]", "0.0.0.0 127.0.0.1", "*", "0", "127.1", "0x7f000001", "-x"]
-GOOD_HOSTS = ["127.0.0.1", "0.0.0.0", "::", "::1", "192.0.2.10", "localhost", "gw.example.lan"]
+BAD_HOSTS = [
+    "not a host!",
+    "[::]",
+    "0.0.0.0 127.0.0.1",
+    "*",
+    "0",
+    "127.1",
+    "0x7f000001",
+    "-x",
+    "::ffff:127.0.0.1",
+    "::1%x y",
+    "127.0.0.1.",
+    "08.0.0.1",
+    "4294967296",
+    "my_host",
+]
+GOOD_HOSTS = [
+    "127.0.0.1",
+    "0.0.0.0",
+    "::",
+    "::1",
+    "192.0.2.10",
+    "localhost",
+    "gw.example.lan",
+    "fe80::1%eth0",
+    "::%1",
+]
 
 
 @pytest.mark.parametrize("value", BAD_HOSTS)
@@ -250,3 +275,36 @@ def test_shipped_examples_do_not_pin_a_listen_host() -> None:
                 continue
             key = stripped.partition("=")[0].strip()
             assert key not in {"host", "GW_HOST", "GW_DEFAULT_HOST"}, (name, line)
+
+
+def test_healthcheck_url_rewrites_all_interfaces(tmp_path: Path) -> None:
+    from gitwarden.config import healthcheck_url
+
+    assert healthcheck_url(_env(tmp_path, GW_DEFAULT_HOST="0.0.0.0", GW_PORT="9090")).endswith(
+        "://127.0.0.1:9090/health"
+    )
+    assert healthcheck_url(_env(tmp_path, GW_HOST="::", GW_PORT="9091")).endswith(
+        "://127.0.0.1:9091/health"
+    )
+    assert (
+        healthcheck_url(_env(tmp_path, GW_HOST="172.30.0.2", GW_PORT="9092"))
+        == "http://172.30.0.2:9092/health"
+    )
+    assert (
+        healthcheck_url(_env(tmp_path, GW_HOST="::1", GW_PORT="9093")) == "http://[::1]:9093/health"
+    )
+
+
+def test_entrypoint_warns_when_listening_on_all_interfaces(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    monkeypatch.setattr(entry, "create_app", lambda config: "app")
+    monkeypatch.setattr(entry.uvicorn, "run", lambda app, **kw: None)
+    for key in ("GW_HOST", "GW_DEFAULT_HOST", "GW_PORT", "GW_CONFIG"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("GW_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("GW_ADMIN_PASSWORD", "test-password")
+    monkeypatch.setenv("GW_HOST", "0.0.0.0")
+    with caplog.at_level(logging.WARNING, logger="gitwarden"):
+        entry.main()
+    assert any("0.0.0.0" in r.getMessage() and "警告" in r.getMessage() for r in caplog.records)

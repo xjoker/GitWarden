@@ -33,5 +33,5 @@ COPY VERSION LICENSE /app/
 USER 10001
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["/app/.venv/bin/python", "-c", "import os, urllib.request; urllib.request.urlopen(f\"http://127.0.0.1:{os.getenv('GW_PORT', '8080')}/health\", timeout=3).read()"]
+    CMD ["/app/.venv/bin/python", "-c", "from gitwarden.config import probe_health; probe_health()"]
 CMD ["/app/.venv/bin/python", "-m", "gitwarden"]
