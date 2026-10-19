@@ -16,6 +16,8 @@ In the container, `GW_DATA_DIR` defaults to `/data`. In a source checkout, the a
 | `GW_DATA_DIR` | `/data` in the image, `./data` otherwise | SQLite database, archives, credentials, and work directory. |
 | `GW_CONFIG` | `$GW_DATA_DIR/config/gitwarden.toml` | Optional TOML configuration path. |
 | `GW_PORT` | `8080` | WebUI port and Compose host/container port; both default to `8080`. |
+| `GW_HOST` | unset | Application listen address. Overrides `host` in `[server]`. See [Listen address](#listen-address). |
+| `GW_DEFAULT_HOST` | `0.0.0.0` in the image, unset otherwise | Fallback listen address used when neither `GW_HOST` nor `[server] host` is set. Set by the Docker image; not meant to be set by hand. |
 | `GW_TICK_SECONDS` | `30` | Scheduler polling tick. Must be greater than zero. |
 | `GW_WORKERS` | `2` | Scheduler worker count, from 1 through 4. |
 | `GW_MIN_SYNC_MINUTES` | `5` | Minimum interval accepted for a task. Minimum allowed setting is 1. |
@@ -35,12 +37,37 @@ Compose also reads these project-environment values:
 
 `GW_BIND` and `GW_IMAGE` are Compose interpolation inputs, not application settings. Docker Compose loads `.env` in the project directory; the Python application does not automatically load that file. With plain Docker, pass the file, a plaintext file on disk, using `--env-file .env` or export the variables yourself.
 
+## Listen address
+
+The application chooses its listen address in this order (highest first):
+
+1. `GW_HOST` environment variable;
+2. `host` under `[server]` in the TOML file;
+3. `GW_DEFAULT_HOST` environment variable, which the Docker image sets to `0.0.0.0`;
+4. `127.0.0.1`.
+
+An empty `GW_HOST` or `GW_DEFAULT_HOST` counts as unset. `[server] host` must be a non-empty string.
+
+- **Run directly** (`python -m gitwarden`, systemd, a process manager): GitWarden listens on `127.0.0.1` and is reachable from the same machine only.
+- **Official image, Compose, or `docker run`**: the application listens on `0.0.0.0` inside the container, which published ports require. Host exposure is controlled by the port mapping (`GW_BIND` in Compose, `--publish 127.0.0.1:8080:8080` with plain Docker). Do not set `GW_HOST` or `[server] host` to `127.0.0.1` in a container: the published port stops answering.
+
+`GW_BIND` and `GW_HOST` are different settings: `GW_BIND` is the host-side address of the Compose port mapping; `GW_HOST` is the address the application itself listens on.
+
+### Upgrading from earlier versions
+
+Earlier versions always listened on `0.0.0.0` and had no listen-address setting. After upgrading:
+
+- **Affected:** deployments that run GitWarden directly, or in a custom image or entrypoint that does not use this repository's `Dockerfile`, and are reached from another machine (or, for a custom image, through a published port). They now listen on `127.0.0.1` only. `ss -ltnp | grep 8080` shows `127.0.0.1:8080` in that case.
+- **Not affected:** the official image and the repository's Compose file.
+- **Restore the old behavior:** set `GW_HOST=0.0.0.0` (for systemd, `Environment=GW_HOST=0.0.0.0`, then `systemctl daemon-reload` and restart the unit), or add `host = "0.0.0.0"` under `[server]`. A custom image can use `ENV GW_DEFAULT_HOST=0.0.0.0` instead, which keeps a mounted TOML `host` effective. Listening on all interfaces exposes the WebUI to every network the host is on; use a firewall or reverse proxy.
+
 ## TOML settings
 
 Use a file such as `/data/config/gitwarden.toml` when a setting should remain with the data volume:
 
 ```toml
 [server]
+# host = "127.0.0.1"  # see Listen address; leave unset in Docker
 port = 8080
 
 [scheduler]

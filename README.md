@@ -90,6 +90,12 @@ See [Releases](https://github.com/xjoker/GitWarden/releases) for available versi
 
 For a non-Compose deployment, see [Deployment](docs/wiki/Deployment.md). For configuration, persistent-volume backups, and recovery, see the [Wiki source index](docs/wiki/Home.md).
 
+### Listen address
+
+> **Upgrade note:** when started directly (`python -m gitwarden`, systemd, or a custom image without this repository's `Dockerfile`), GitWarden now listens on `127.0.0.1` only. Earlier versions always listened on `0.0.0.0`. To accept connections from other machines again, set `GW_HOST=0.0.0.0` or `host = "0.0.0.0"` under `[server]` in `gitwarden.toml`, preferably behind a firewall or reverse proxy.
+
+The official image and the Compose file are not affected: the image sets `GW_DEFAULT_HOST=0.0.0.0`, so the application still listens on all interfaces inside the container, and Compose publishes the port on `127.0.0.1` on the host (`GW_BIND`). An explicit `GW_HOST` or `[server] host` always wins over that image default. See [Listen address](docs/wiki/Configuration.md#listen-address).
+
 ## Create the first backup
 
 1. Log in with `GW_ADMIN_PASSWORD`. The WebUI defaults to English and can switch to Simplified Chinese.

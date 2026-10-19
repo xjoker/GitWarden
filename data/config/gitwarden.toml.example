@@ -3,6 +3,11 @@
 # Set the administrator password only through GW_ADMIN_PASSWORD.
 
 [server]
+# Listen address. Leave it commented out to use the default: 127.0.0.1 when run
+# directly, 0.0.0.0 inside the official Docker image (published ports need it).
+# Set "0.0.0.0" to accept connections from other machines (use a firewall), or
+# "::" for IPv6. A value here overrides the Docker image default; GW_HOST overrides it.
+# host = "127.0.0.1"
 port = 8080
 
 [scheduler]

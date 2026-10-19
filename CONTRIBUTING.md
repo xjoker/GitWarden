@@ -23,7 +23,7 @@ export GW_DATA_DIR=./data
 uv run python -m gitwarden
 ```
 
-The application binds to all interfaces when run directly. For local-only access, use the Docker deployment's default loopback port mapping. The Python application does not read `.env` itself.
+The application listens on `127.0.0.1` when run directly. Set `GW_HOST=0.0.0.0` (or `host` under `[server]` in the TOML file) to accept connections from other machines. The Python application does not read `.env` itself.
 
 ## Changes and tests
 
