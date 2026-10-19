@@ -22,7 +22,7 @@ def main() -> None:
         _LOG.warning(
             "警告: 正在监听 %s:%s。在 --network host / network_mode: host 下会暴露"
             "宿主机所有网卡；在默认 bridge 网络下暴露面由端口映射（-p / GW_BIND）控制。"
-            "设置 GW_HOST 或 [server] host 可收窄监听地址。容器内镜像默认"
+            "设置 GW_HOST 或 [server] host 可收窄监听地址。容器内镜像默认 "
             "GW_DEFAULT_HOST=0.0.0.0 保持不变。",
             config.host,
             config.port,
