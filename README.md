@@ -98,7 +98,7 @@ The official image and the Compose file are not affected (except with `--network
 
 Host exposure is decided by the port mapping, not by the application: with `docker run`, keep `127.0.0.1` in the mapping (`-p 127.0.0.1:8080:8080`) to stay local. `-p 8080:8080` without an address publishes on every IPv4 and IPv6 interface, and Docker-published ports bypass host firewall rules such as ufw (filter in the `DOCKER-USER` chain or publish on a specific address instead). `GW_BIND` is only a Compose port-mapping variable: it has no effect with `docker run` (even with `-e GW_BIND=…` or `--env-file .env`) or with `--network host` / `network_mode: host`.
 
-With `--network host` (Compose: `network_mode: host`), the image listens on every host interface, and `GW_BIND` and `--publish` have no effect. Set `host = "127.0.0.1"` under `[server]` in the mounted `gitwarden.toml`, or `GW_HOST=127.0.0.1`, to restrict it. Both settings are honored starting with image 20261019.2; earlier images (20261019.1, 20261016.1) ignore them and always listen on every host interface with `--network host`, so use 20261019.2 or later. See [Listen address](docs/wiki/Configuration.md#listen-address).
+With `--network host` (Compose: `network_mode: host`), the image listens on every host interface, and `GW_BIND` and `--publish` have no effect. You **must** set `GW_HOST` or `[server] host` to restrict it (for example `GW_HOST=127.0.0.1`). Both settings are honored starting with image 20261019.2; earlier images (20261019.1, 20261016.1) ignore them and always listen on every host interface with `--network host`, so use 20261019.2 or later. Listening on `0.0.0.0` logs a startup warning. See [Listen address](docs/wiki/Configuration.md#listen-address).
 
 ## Create the first backup
 
