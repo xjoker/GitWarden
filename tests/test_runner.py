@@ -6,9 +6,16 @@ import pytest
 from gitwarden.archive import capture
 from gitwarden.db import Store
 from gitwarden.git import rev_parse, run
-from gitwarden.i18n import msg
+from gitwarden.i18n import msg, render
 from gitwarden.logs import list_refs, list_steps
-from gitwarden.runner import archive_path, audit_target, bind_target, retry_target, run_task
+from gitwarden.runner import (
+    _partial_summary,
+    archive_path,
+    audit_target,
+    bind_target,
+    retry_target,
+    run_task,
+)
 from gitwarden.scheduler import Scheduler
 from tests.conftest import ID, commit, make_source
 
@@ -68,7 +75,29 @@ def test_one_broken_target_does_not_block_others(env, tmp_path):
     assert env.store.get_target(bad)["last_status"] == "error"
     assert env.store.get_target(good)["last_status"] == "ok"
     assert env.store.get_task(env.task_id)["last_status"] == "partial"
-    assert env.store.list_runs(env.task_id)[0]["status"] == "partial"
+    run_row = env.store.list_runs(env.task_id)[0]
+    assert run_row["status"] == "partial"
+    # Lock run.partial_failures copy for both catalogs (en / zh_CN).
+    assert render(run_row["message"], "en") == "1 target(s) failed."
+    assert render(run_row["message"], "zh_CN") == "1 个目标失败。"
+
+
+def test_partial_summary_includes_failure_count_in_en_and_zh_CN():
+    """Directly assert run.partial_failures wording for en and zh_CN catalogs."""
+    held_only = _partial_summary([["a", "refs/heads/main"]], 0)
+    assert held_only is not None
+    assert "target(s) failed" not in render(held_only, "en")
+
+    failures_only = _partial_summary([], 2)
+    assert render(failures_only, "en") == "2 target(s) failed."
+    assert render(failures_only, "zh_CN") == "2 个目标失败。"
+
+    both = _partial_summary([["a", "refs/heads/main"]], 3)
+    en = render(both, "en")
+    zh = render(both, "zh_CN")
+    assert en.endswith("3 target(s) failed.")
+    assert zh.endswith("3 个目标失败。")
+    assert "1 target(s) failed." not in en
 
 
 def test_run_logs_steps_refs_and_failed_target_stderr(env):

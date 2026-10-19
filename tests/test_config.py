@@ -132,13 +132,43 @@ def test_delete_guard_defaults_toml_and_env(tmp_path: Path) -> None:
     [
         {"GW_DELETE_GUARD_RATIO": "0"},
         {"GW_DELETE_GUARD_RATIO": "1.5"},
+        {"GW_DELETE_GUARD_RATIO": "-1"},
+        {"GW_DELETE_GUARD_RATIO": "nan"},
+        {"GW_DELETE_GUARD_RATIO": "inf"},
+        {"GW_DELETE_GUARD_RATIO": "-inf"},
         {"GW_DELETE_GUARD_MIN_REFS": "0"},
+        {"GW_DELETE_GUARD_MIN_REFS": "-1"},
+        {"GW_DELETE_GUARD_MIN_REFS": "nan"},
+        {"GW_DELETE_GUARD_MIN_REFS": "2.5"},
         {"GW_DELETE_GUARD": "maybe"},
     ],
 )
 def test_invalid_delete_guard_settings_are_rejected(tmp_path: Path, env) -> None:
     with pytest.raises(ConfigError):
         load_config({"GW_DATA_DIR": str(tmp_path), "GW_ADMIN_PASSWORD": "pw", **env})
+
+
+def test_blank_delete_guard_ratio_env_counts_as_unset(tmp_path: Path) -> None:
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config" / "gitwarden.toml").write_text("[safety]\ndelete_guard_ratio = 0.8\n")
+    config = load_config(
+        {
+            "GW_DATA_DIR": str(tmp_path),
+            "GW_ADMIN_PASSWORD": "pw",
+            "GW_DELETE_GUARD_RATIO": "",
+        }
+    )
+    assert config.delete_guard_ratio == 0.8
+
+
+@pytest.mark.parametrize("literal", ["1.5", "-0.1", "nan", "inf", "-inf"])
+def test_invalid_toml_delete_guard_ratio_is_rejected(tmp_path: Path, literal: str) -> None:
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config" / "gitwarden.toml").write_text(
+        f"[safety]\ndelete_guard_ratio = {literal}\n"
+    )
+    with pytest.raises(ConfigError):
+        load_config({"GW_DATA_DIR": str(tmp_path), "GW_ADMIN_PASSWORD": "pw"})
 
 
 # ---- delete_guard 开关：严格解析（环境变量和 TOML 同一套规则）----

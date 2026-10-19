@@ -10,7 +10,7 @@ from gitwarden.config import Config
 from gitwarden.db import Store
 from gitwarden.git import run
 from gitwarden.runner import run_task
-from gitwarden.web import ICON_FILES, create_app
+from gitwarden.web import ICON_FILES, STATIC_DIR, create_app
 from tests.conftest import commit, make_source
 
 PASSWORD = "pw-test-123"
@@ -81,8 +81,9 @@ def test_icons_are_public_and_do_not_expose_protected_content(client):
         assert client.get(path, follow_redirects=False).status_code == 404
     assert client.get("/", follow_redirects=False).headers["location"] == "/login"
     login_page = client.get("/login").text
-    assert '<link rel="icon" href="/favicon.ico" sizes="32x32">' in login_page
-    assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' in login_page
+    assert "/favicon.ico?v=" in login_page
+    assert "/favicon.svg?v=" in login_page
+    assert "/apple-touch-icon.png?v=" in login_page
 
 
 def test_icon_routes_take_no_parameters(client):
@@ -98,6 +99,10 @@ def test_icon_routes_take_no_parameters(client):
         assert not dep.header_params and not dep.cookie_params, path
         assert not dep.dependencies, path
         assert not inspect.signature(route.endpoint).parameters, path
+        cell = route.endpoint.__closure__
+        assert cell is not None, path
+        parents = {getattr(c.cell_contents, "parent", None) for c in cell}
+        assert STATIC_DIR in parents, (path, parents)
 
 
 def test_wrong_password_is_401_and_correct_password_logs_in(client, monkeypatch):

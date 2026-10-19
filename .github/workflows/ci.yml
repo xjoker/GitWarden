@@ -98,6 +98,7 @@ jobs:
           assert not any(item.startswith('GW_HOST=') for item in env), env
           command = json.dumps([config.get('Entrypoint'), config.get('Cmd')])
           assert 'GW_HOST' not in command, command
+          print("listen-address settings OK")
           PY
 
       - name: Start the built image and verify health and login

@@ -100,7 +100,7 @@ GW_IMAGE=ghcr.io/xjoker/gitwarden:20261019.2 docker compose up -d --no-build
 
 对外暴露范围由端口映射决定，而不是由应用决定：使用 `docker run` 时，要在映射里写上 `127.0.0.1`（`-p 127.0.0.1:8080:8080`）才能只开在本机。不写地址的 `-p 8080:8080` 会发布到所有 IPv4 和 IPv6 接口，而且 Docker 发布的端口会绕过 ufw 等宿主机防火墙规则（请在 `DOCKER-USER` 链中过滤，或者只发布到指定地址）。`GW_BIND` 只是 Compose 的端口映射变量：在 `docker run` 中（即使用了 `-e GW_BIND=…` 或 `--env-file .env`）以及 `--network host` / `network_mode: host` 下都不起作用。
 
-使用 `--network host`（Compose 中为 `network_mode: host`）时，镜像会监听宿主机的所有网卡，`GW_BIND` 和 `--publish` 都不起作用。要收窄监听范围，请在挂载的 `gitwarden.toml` 的 `[server]` 下写 `host = "127.0.0.1"`，或设置 `GW_HOST=127.0.0.1`。这两个设置从 20261019.2 镜像起才生效；更早的镜像（20261019.1、20261016.1）会忽略它们，在 `--network host` 下总是监听宿主机所有网卡，所以请使用 20261019.2 或更新的版本。详见 [Listen address](docs/wiki/Configuration.md#listen-address)。
+使用 `--network host`（Compose 中为 `network_mode: host`）时，镜像会监听宿主机的所有网卡，`GW_BIND` 和 `--publish` 都不起作用。**必须**设置 `GW_HOST` 或 `[server] host` 来收窄监听范围（例如 `GW_HOST=127.0.0.1`）。这两个设置从 20261019.2 镜像起才生效；更早的镜像（20261019.1、20261016.1）会忽略它们，在 `--network host` 下总是监听宿主机所有网卡，所以请使用 20261019.2 或更新的版本。监听 `0.0.0.0` 时启动日志会打出警告。详见 [Listen address](docs/wiki/Configuration.md#listen-address)。
 
 ## 创建第一个备份
 
