@@ -184,28 +184,70 @@ def test_https_network_commands_set_low_speed_limits(tmp_path: Path) -> None:
     assert "http.lowSpeedTime=600" in trace_text
 
 
+def _wait_until(predicate, timeout: float, what: str, details=lambda: "") -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            pytest.fail(f"timed out after {timeout:g}s waiting for {what}{details()}")
+        time.sleep(0.02)
+
+
 def test_stalled_run_releases_archive_lock_for_the_next_task(tmp_path: Path) -> None:
+    # Generous upper bound so a broken run fails clearly instead of hanging;
+    # the happy path finishes in about a second.
+    wait_seconds = 30
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)
-    listener.settimeout(0.2)
+    # Only used to poll `stop` between accept()/recv() calls; the server keeps
+    # waiting for git until the test tells it to stop, however slow git is.
+    listener.settimeout(0.05)
     port = listener.getsockname()[1]
     stop = threading.Event()
     accepted = threading.Event()
+    request_received = threading.Event()
+    peer_closed = threading.Event()
+    server_errors: list[BaseException] = []
 
     def hold_connection() -> None:
         conn = None
         try:
-            conn, _ = listener.accept()
+            while conn is None:
+                if stop.is_set():
+                    return
+                try:
+                    conn, _ = listener.accept()
+                except TimeoutError:
+                    continue
             accepted.set()
-            while not stop.wait(0.05):
-                pass
-        except OSError:
-            pass
+            conn.settimeout(0.05)
+            request = b""
+            # Read git's HTTP request but never answer it, so git is connected
+            # and stuck waiting; then notice when the stall detector kills it.
+            while not stop.is_set():
+                try:
+                    chunk = conn.recv(65536)
+                except TimeoutError:
+                    continue
+                if not chunk:
+                    peer_closed.set()
+                    break
+                request += chunk
+                if b"\r\n\r\n" in request:
+                    request_received.set()
+            stop.wait()
+        except OSError as exc:
+            server_errors.append(exc)
         finally:
             if conn is not None:
                 conn.close()
+
+    def server_state() -> str:
+        return (
+            f" (accepted={accepted.is_set()}, request_received={request_received.is_set()},"
+            f" peer_closed={peer_closed.is_set()}, server_errors={server_errors!r})"
+        )
 
     server_thread = threading.Thread(target=hold_connection, daemon=True)
     server_thread.start()
@@ -219,27 +261,48 @@ def test_stalled_run_releases_archive_lock_for_the_next_task(tmp_path: Path) -> 
     source = tmp_path / "source.git"
     run(None, "init", "--bare", str(source))
     healthy_id = store.add_task("healthy", str(source), enabled=False)
+
+    def task_state() -> str:
+        return (
+            f" (stalled last_status={store.get_task(stalled_id)['last_status']!r},"
+            f" healthy last_status={store.get_task(healthy_id)['last_status']!r})" + server_state()
+        )
+
     scheduler = Scheduler(store, data_dir, tick_seconds=0.01, workers=1, stall_minutes=0.01)
     scheduler.start()
     try:
         scheduler.trigger(stalled_id)
-        deadline = time.monotonic() + 5
-        while not accepted.is_set() and time.monotonic() < deadline:
-            time.sleep(0.02)
-        assert accepted.is_set()
+        # git has connected and sent its request; the server never answers, so
+        # the stalled run is now holding its archive lock and the only worker.
+        _wait_until(
+            request_received.is_set,
+            wait_seconds,
+            "git to connect and block on the unanswered request",
+            task_state,
+        )
         scheduler.trigger(healthy_id)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            healthy = store.get_task(healthy_id)
-            if healthy["last_status"] == "ok":
-                break
-            time.sleep(0.02)
+        _wait_until(
+            peer_closed.is_set,
+            wait_seconds,
+            "the stall detector to kill the stalled git process",
+            task_state,
+        )
+        _wait_until(
+            lambda: (
+                store.get_task(stalled_id)["last_status"] == "failed"
+                and store.get_task(healthy_id)["last_status"] == "ok"
+            ),
+            wait_seconds,
+            "the stalled run to fail and the next task to succeed",
+            task_state,
+        )
     finally:
         scheduler.stop()
         stop.set()
         listener.close()
-        server_thread.join(timeout=1)
+        server_thread.join(timeout=5)
 
+    assert not server_errors
     assert accepted.is_set()
     assert store.get_task(stalled_id)["last_status"] == "failed"
     assert store.get_task(healthy_id)["last_status"] == "ok"
