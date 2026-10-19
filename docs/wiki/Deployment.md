@@ -67,10 +67,12 @@ curl --fail http://127.0.0.1:8080/health
 
 A source URL that starts with `/` is read inside the container, not on the host. Mount the host repository and enter the container path in the wizard. Without the mount, the sync fails with `fatal: '/srv/git/src.git' does not appear to be a git repository`.
 
-Git refuses a repository that is not owned by the user running it. With the default image user, a host repository owned by another UID fails with `fatal: detected dubious ownership in repository at '/repos/src.git'`. GitWarden ignores global and system Git configuration, so `safe.directory` cannot be set from outside the application; make the repository owned by UID `10001` instead:
+Git refuses a repository whose top-level directory is not owned by the user running it. With the default image user, a host repository owned by another UID fails with `fatal: detected dubious ownership in repository at '/repos/src.git'`. There is no supported way to add a `safe.directory` exception from outside the application: GitWarden runs Git with `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null` and its own `HOME`, so neither `/etc/gitconfig` (including one baked into a custom image) nor `~/.gitconfig` is read, and Git itself drops `-c` and `GIT_CONFIG_COUNT` settings when it starts `upload-pack` for a local path. Make the repository owned by the container user instead (UID `10001` by default).
+
+Git checks only the owner of the top-level directory, so changing that directory is enough for GitWarden to read the repository. `chown -R` also works, but it takes write access away from every host user that pushes to the repository (see below):
 
 ```bash
-sudo chown -R 10001:10001 /srv/git/src.git
+sudo chown 10001 /srv/git/src.git        # top-level directory only
 docker run -d \
   --name gitwarden \
   --restart unless-stopped \
@@ -89,7 +91,54 @@ With Compose, add the mount to the service's existing `volumes` list:
       - /srv/git/src.git:/repos/src.git:ro
 ```
 
-Then use `/repos/src.git` as the source URL. A read-only mount is enough because a source is only fetched. After the ownership change, anything that pushes to the host repository must run as UID `10001` or keep that ownership. Alternatively, run the container with `--user` set to the repository owner's UID:GID and mount `/data` from a host directory owned by the same UID, so the application can still write its data.
+Then use `/repos/src.git` as the source URL. A read-only mount is enough because a source is only fetched.
+
+### Repositories that are still pushed to on the host
+
+After the ownership change, a host user that pushes to the repository over a local path first gets `detected dubious ownership`. After `git config --global --add safe.directory /srv/git/src.git`, a repository changed with `chown -R 10001:10001` then rejects the push with `unable to create temporary object directory`. A top-level-only `chown 10001` without group write access accepts pushes to most branches, but rejects a push to the branch `HEAD` points to with `Unable to create '/srv/git/src.git/./HEAD.lock': Permission denied`.
+
+Each of the following was tested with Git 2.47.3: a host user pushing over a local path, and GitWarden syncing the read-only mount afterwards. `<group>` is a group that the pushing users belong to.
+
+- **Shared group.** Make the repository group-writable with setgid directories, and give each pushing user a `safe.directory` entry:
+
+  ```bash
+  git --git-dir=/srv/git/src.git config core.sharedRepository group
+  sudo chown -R 10001:<group> /srv/git/src.git
+  sudo chmod -R g+rwX /srv/git/src.git
+  sudo find /srv/git/src.git -type d -exec chmod g+s {} +
+  git config --global --add safe.directory /srv/git/src.git   # as each pushing user
+  ```
+
+- **Top-level directory with group write.** Change only the top-level directory and make it group-writable; the contents keep their current owner:
+
+  ```bash
+  sudo chown 10001:<group> /srv/git/src.git
+  sudo chmod g+ws /srv/git/src.git
+  git config --global --add safe.directory /srv/git/src.git   # as each pushing user
+  ```
+
+- **Mirror owned by the container user.** Leave the original repository unchanged and mount a mirror instead. The refresh runs as UID `10001` and also hits the ownership check when it reads the original. `git -c safe.directory=...` has no effect there; the entry must be in that user's global configuration:
+
+  ```bash
+  # as UID 10001, with HOME pointing to a directory owned by 10001
+  git config --global --add safe.directory /srv/git/src.git
+  git clone --mirror /srv/git/src.git /srv/git/mirrors/src.git
+  git --git-dir=/srv/git/mirrors/src.git fetch --prune origin   # run periodically
+  ```
+
+  Mount `/srv/git/mirrors/src.git` instead. GitWarden sees new commits only after the next refresh.
+
+Serving the repository over SSH or HTTPS and using that URL as the source avoids the ownership check entirely. That setup was not tested here.
+
+### Running the container as the repository owner
+
+Alternatively, leave the repository unchanged and run the container with `--user <uid>:<gid>` of the repository owner. `/data` must then be writable by that UID. With the default named volume, which is owned by `10001`, the container exits at startup with `PermissionError: [Errno 13] Permission denied: '/data/gitwarden.db'`. Either mount `/data` from a host directory owned by the same UID (`--volume /srv/gitwarden-data:/data`), or stop the container and change the owner of the existing data first:
+
+```bash
+docker run --rm --user 0 --volume gitwarden-data:/data --entrypoint chown gitwarden:local -R <uid>:<gid> /data
+```
+
+That `chown` does not persist on a new, empty named volume: Docker copies the image's `/data` ownership into an empty volume when it is next mounted. Use a bind mount for a new deployment.
 
 ## Persistence and lifecycle
 
