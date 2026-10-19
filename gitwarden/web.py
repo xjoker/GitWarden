@@ -58,6 +58,8 @@ ICON_FILES = {
     "/favicon.svg": ("favicon.svg", "image/svg+xml"),
     "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
 }
+# URL 不带版本号，所以缓存一天、不用 immutable。
+ICON_HEADERS = {"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"}
 _ALL_ROWS = 2**31 - 1
 
 STATUS_LABELS = {
@@ -670,7 +672,7 @@ def _icon_route(name: str, media_type: str):
     path = STATIC_DIR / name
 
     def icon() -> FileResponse:
-        return FileResponse(path, media_type=media_type)
+        return FileResponse(path, media_type=media_type, headers=ICON_HEADERS)
 
     return icon
 
