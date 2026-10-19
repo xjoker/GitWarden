@@ -68,7 +68,7 @@ body:
     id: logs
     attributes:
       label: Relevant logs
-      description: Run steps from **Logs** or `docker compose logs gitwarden`. Review and redact before posting.
+      description: Step details from the **Logs** page, or `docker compose logs gitwarden`. Review and redact before posting.
       render: text
   - type: checkboxes
     id: checks

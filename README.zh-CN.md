@@ -10,7 +10,7 @@ GitWarden 是一个自托管的 Git 历史镜像工具。它按计划把来源�
 
 ![终端演示：历史仓离线时来源被强推，主镜像整体暂停更新，旧 commit 仍被保全](docs/demo.gif)
 
-*演示（约 50 秒，使用本地裸仓库，终端界面为英文）：GitWarden 先完成一次镜像；随后历史仓拒绝推送，来源对 `main` 执行 force push、对 `dev` 正常快进。安全门禁让整个主镜像暂停更新（两个分支都不推送），旧的 `main` commit 以 `refs/preserved/<ULID>` 留在本地档案；历史仓恢复后，先确认保全标签，再让主镜像一次追上。*
+*演示（约 50 秒，使用本地裸仓库，终端界面为英文）：GitWarden 先完成一次镜像；随后历史仓拒绝推送，来源对 `main` 执行 force push、对 `dev` 正常快进。安全门禁让整个主镜像暂停更新（两个分支都不推送），旧的 `main` commit 以 `refs/preserved/<ULID>` 留在本地档案；历史仓恢复后，先确认保全标签，再让主镜像追上来源。录屏中的 `gwctl` 是演示用的辅助脚本，提交的是与备份向导和 **Run** 按钮相同的 WebUI 表单；GitWarden 本身不提供 CLI。*
 
 ![GitWarden 总览](docs/images/overview.jpg)
 
@@ -27,21 +27,24 @@ GitWarden 只保护已经采集到的状态。两次轮询之间出现又消失�
 
 ### 安全门禁拦截时会发生什么
 
-GitWarden 修改主镜像上的某个 ref 之前，要求这次修改是快进，或者将被覆盖、删除的旧对象已经在本轮运行中被该目标的历史仓确认。因此历史仓正常时，force push、删分支和改 tag 在保全标签确认后会自动放行。如果旧对象无法在历史仓确认，例如历史仓不可达或拒绝推送，这次修改就会被拦下，目标显示 **Blocked by safety gate**（`gate_blocked`，门禁阻断）。如果主镜像上任一 ref 与 GitWarden 上次推送的值不一致（**Mirror conflict**，`conflict`，通常意味着有其他写入方），主镜像同样会暂停。
+GitWarden 修改主镜像上已有的 ref 之前，会先经过安全门禁。分支的快进直接放行；其他修改（分支的非快进更新、删除分支，以及标签的任何移动或删除）只有在被覆盖的旧对象已经在本轮运行中被该目标的历史仓确认时才放行：旧对象必须是某个已确认保全标签的对象，或者（仅限分支）被某个已确认的保全 commit 包含。因此历史仓正常时，force push、删分支和改 tag 在保全标签确认后会自动放行。如果旧对象无法在历史仓确认，例如历史仓不可达或拒绝推送，这次修改就会被拦下，目标显示 **Blocked by safety gate**（`gate_blocked`，门禁阻断）。如果历史仓里已有对象不一致的 `gw/*` 标签，目标会显示 **History conflict**（`history_conflict`，历史冲突），它优先于 `gate_blocked`。如果主镜像上任一 ref 与 GitWarden 上次推送的值不一致（**Mirror conflict**，`conflict`，通常意味着有其他写入方），主镜像同样会暂停。
 
-拦截范围是该目标的整个主镜像，而不只是出问题的那个 ref：只要有一个 ref 被门禁拦下或存在冲突，本轮就不会向这个主镜像推送任何 ref 的更新或删除，其他分支和标签的普通快进也一样暂停。此时来源仍会继续采集到本地档案，旧对象以 `refs/preserved/<ULID>` 保留在本地，每轮仍会尝试把待推送的保全标签推到历史仓，同一任务的其他目标也会各自独立处理。恢复方法是先排除原因：让历史仓恢复可达并允许 GitWarden 写入，或者停掉意外的写入方，把冲突的 ref 恢复为 GitWarden 上次推送的值；然后在目标卡片上点 **Retry**，或等待下一次计划运行。GitWarden 会先确认待推送的 `gw/*` 标签，再一次性把主镜像更新到最新状态。没有绕过门禁、强制推送主镜像的开关。详见 [Troubleshooting](docs/wiki/Troubleshooting.md#target-run-is-blocked-or-conflicted)。
+拦截范围是该目标的整个主镜像，而不只是出问题的那个 ref：只要有一个 ref 被门禁拦下或存在冲突，本轮就不会向这个主镜像推送任何 ref 的更新或删除，其他分支和标签的普通快进也一样暂停。此时来源仍会继续采集到本地档案，旧对象以 `refs/preserved/<ULID>` 保留在本地，每轮仍会尝试把待推送的保全标签推到历史仓，同一任务的其他目标也会各自独立处理。恢复方法是先排除原因：让历史仓恢复可达并允许 GitWarden 写入，或者停掉意外的写入方，把冲突的 ref 恢复为 GitWarden 上次推送的值；然后在目标卡片上点 **Retry**，或等待下一次计划运行。GitWarden 会先确认待推送的 `gw/*` 标签，再把主镜像更新到最新状态。当前版本没有绕过门禁、强制推送主镜像的选项。详见 [Troubleshooting](docs/wiki/Troubleshooting.md#target-run-is-blocked-or-conflicted)。
 
 历史仓不是第二个完整镜像。它保存被覆盖或删除的历史版本，当前引用仍在主镜像仓和本地档案中。需要最新已采集状态时，请保留主镜像仓或 GitWarden 数据卷。
 
 ## 直接试用发布镜像
 
-不想先获取源码时，可以用命名数据卷和仅绑定本机回环地址的端口直接运行发布镜像，然后打开 <http://127.0.0.1:8080>：
+不想先获取源码时，可以直接运行发布镜像：使用单独的数据卷、只绑定本机回环地址的端口，日志轮转与 Compose 相同。然后打开 <http://127.0.0.1:8080>：
 
 ```bash
-docker run -d --name gitwarden --restart unless-stopped -e GW_ADMIN_PASSWORD='change-me-to-a-long-random-password' -p 127.0.0.1:8080:8080 -v gitwarden-data:/data ghcr.io/xjoker/gitwarden:20261016.1
+read -rsp 'GitWarden admin password: ' GW_ADMIN_PASSWORD && echo && export GW_ADMIN_PASSWORD
+docker run -d --name gitwarden-trial --restart unless-stopped -e GW_ADMIN_PASSWORD -p 127.0.0.1:8080:8080 -v gitwarden-trial-data:/data --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 ghcr.io/xjoker/gitwarden:20261016.1
 ```
 
-运行前先替换密码。用 `-e` 传入的密码会留在 shell 历史里；长期使用时，请把密码写进环境变量文件并按 [Deployment](docs/wiki/Deployment.md#plain-docker) 使用 `--env-file`，或者使用下面的 Docker Compose 方式。不要把端口发布到公网接口，见 [Security](SECURITY.md)。
+`read -rs` 让密码不进入 shell 历史，不带值的 `-e GW_ADMIN_PASSWORD` 会从当前环境传入密码。GitWarden 只从环境变量 `GW_ADMIN_PASSWORD` 读取密码，所以无论用 `-e` 还是 `--env-file` 传入，能访问 Docker daemon 的人都可以用 `docker inspect` 看到它。按 [Deployment](docs/wiki/Deployment.md#plain-docker) 使用权限为 600 的环境变量文件加 `--env-file`，同样可以避免密码进入 shell 历史。不要把端口发布到公网接口，见 [Security](SECURITY.md)。
+
+试用容器使用数据卷 `gitwarden-trial-data`，与 Compose 的 `gitwarden-data` 分开，但端口同样是 8080。启动 Compose 前先执行 `docker rm -f gitwarden-trial`；不再需要试用数据时，用 `docker volume rm gitwarden-trial-data` 删除。
 
 ## 用 Docker Compose 快速启动
 

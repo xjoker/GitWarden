@@ -12,7 +12,7 @@ Run against tag `v20261016.1` (commit `4a5acbc`) with local disposable repositor
 | `GW_IT=1 uv run pytest -q tests/integration` | 28 passed against real local Gitea, Forgejo and SSH |
 | README Docker Compose quick start (`docker compose up -d --build`, `logs`, `/health`) | Started; `/health` returned `20261016.1` |
 | README published-image commands (`GW_IMAGE=ghcr.io/xjoker/gitwarden:20261016.1 docker compose pull` / `up -d --no-build`) | Pulled anonymously; manifest lists linux/amd64 and linux/arm64; `/health` returned version `20261016.1` and commit `4a5acbc032a00cfb5762f8f9e18e959ede7cab37` |
-| README one-line `docker run` trial | Started as UID 10001; `/health` and login succeeded; startup without `GW_ADMIN_PASSWORD` is refused |
+| README trial `docker run` (`read -rs` + `-e GW_ADMIN_PASSWORD`, volume `gitwarden-trial-data`, json-file log rotation 10m × 3) | Started as UID 10001 with health `healthy`; `/health` returned `20261016.1`; login succeeded and a wrong password returned 401; startup without `GW_ADMIN_PASSWORD` is refused |
 | Force push while the history repository rejects pushes ([demo](demo.gif)) | Target reported `gate_blocked`; the main mirror kept both `main` and the fast-forwarded `dev`; the old commit stayed in `refs/preserved/<ULID>`; after the history repository recovered, the `gw/<ULID>` tag was confirmed and the mirror caught up |
 
 In total the suite has 261 tests: 233 that run by default and 28 opt-in integration tests.
