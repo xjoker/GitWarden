@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+Default listen address for direct runs, and the GitWarden logo and favicon.
+
+- Listen on `127.0.0.1` instead of `0.0.0.0` when run directly. New settings `GW_HOST` and `[server] host` choose the listen address (`GW_HOST` wins, and startup logs a warning when it overrides a different `[server] host`); an invalid value stops startup and names the setting.
+- Add the GitWarden logo: replace the WebUI sidebar icon, serve `favicon.ico`, `favicon.svg` (with a dark-scheme variant), and `apple-touch-icon.png` from three fixed routes that are reachable without logging in, and add the logo source files under `docs/brand/`.
+
+Upgrade notes for the listen address: deployments that run GitWarden directly and are reached from another machine, or from a container on the same host, stop answering after the upgrade; set `GW_HOST` or `[server] host` to `0.0.0.0` to accept remote connections again. Custom images or entrypoints not built from this repository's `Dockerfile` are affected too; images `FROM` the official image are not. The official image and Compose are unaffected: the image sets `GW_DEFAULT_HOST=0.0.0.0`, which an explicit `GW_HOST` or `[server] host` overrides. With `--network host` the image still listens on every host interface; set `[server] host` to restrict it.
+
 ## 20261019.1 — 2026-10-19
 
 Mass-deletion guard, container hardening, and documentation updates.
