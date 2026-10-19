@@ -1,5 +1,17 @@
 # Changelog
 
+## 20261019.1 — 2026-10-19
+
+Mass-deletion guard, container hardening, and documentation updates.
+
+- Hold the main mirror when a source that still answers has become empty or has lost most of its refs: when one run would delete every ref, every branch, or at least half of the refs and at least three of them (`GW_DELETE_GUARD_RATIO`, default `0.5`; `GW_DELETE_GUARD_MIN_REFS`, default `3`), nothing is pushed to that main mirror, the deleted refs are still preserved in the history repository, and the target shows **Needs attention** (`delete_guard`). The hold clears once refs with the same names are back in the source. To release an intended deletion, temporarily raise `GW_DELETE_GUARD_RATIO` or `GW_DELETE_GUARD_MIN_REFS` (partial deletions only) or set `GW_DELETE_GUARD=off` (required when every ref or every branch is deleted; it disables every rule), restart, let one run complete, then restore and restart. The settings are global, so the relaxation applies to every task meanwhile. A source that cannot be fetched is now shown as **source failing** instead of healthy.
+- Run the default Compose service with a read-only root filesystem, a tmpfs `/tmp`, all Linux capabilities dropped, and `no-new-privileges`; the application writes only to `/data` and the `/tmp` tmpfs (mounted `noexec`).
+- Upgrade the runtime image's system packages at build time and remove the base image's standalone `pip`, which the runtime does not use.
+- Document mounting a local source repository into the container, including ownership, read-only mounts, repositories that are still pushed to on the host, and running the container as the repository owner.
+- Fix release details in the README, document the safety-gate hold, and add a demo GIF, issue templates, a private vulnerability reporting entry point, and a command for trying the published image.
+
+Upgrade notes for the Compose hardening: it applies only when you use the repository's `compose.yml`; plain `docker run` deployments are unchanged. Keep `/data` on a volume: with a read-only root filesystem and no volume at `/data`, startup fails with `EROFS` (`Read-only file system: '/data/gitwarden.db'`). Custom Compose overrides that rely on root privileges, such as `user: 0` writing to the UID 10001-owned `/data`, lose `CHOWN` and `DAC_OVERRIDE` under `cap_drop: ALL`, and any write outside `/data` and `/tmp` fails; adjust such overrides before upgrading.
+
 ## 20261016.1 — 2026-10-16
 
 First public release.
