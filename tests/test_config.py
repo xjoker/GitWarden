@@ -107,3 +107,35 @@ def test_admin_password_preserves_surrounding_whitespace(tmp_path: Path) -> None
     password = "  secret\t "
     config = load_config(_env(tmp_path, config_path, GW_ADMIN_PASSWORD=password))
     assert config.admin_password == password
+
+
+def test_delete_guard_defaults_toml_and_env(tmp_path: Path) -> None:
+    base = {"GW_DATA_DIR": str(tmp_path), "GW_ADMIN_PASSWORD": "pw"}
+    config = load_config(base)
+    assert (config.delete_guard, config.delete_guard_ratio, config.delete_guard_min_refs) == (
+        True,
+        0.5,
+        3,
+    )
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "gitwarden.toml").write_text(
+        "[safety]\ndelete_guard_ratio = 0.8\ndelete_guard_min_refs = 5\n"
+    )
+    config = load_config(base)
+    assert (config.delete_guard_ratio, config.delete_guard_min_refs) == (0.8, 5)
+    config = load_config({**base, "GW_DELETE_GUARD": "off", "GW_DELETE_GUARD_RATIO": "0.3"})
+    assert config.delete_guard is False and config.delete_guard_ratio == 0.3
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"GW_DELETE_GUARD_RATIO": "0"},
+        {"GW_DELETE_GUARD_RATIO": "1.5"},
+        {"GW_DELETE_GUARD_MIN_REFS": "0"},
+        {"GW_DELETE_GUARD": "maybe"},
+    ],
+)
+def test_invalid_delete_guard_settings_are_rejected(tmp_path: Path, env) -> None:
+    with pytest.raises(ConfigError):
+        load_config({"GW_DATA_DIR": str(tmp_path), "GW_ADMIN_PASSWORD": "pw", **env})

@@ -33,12 +33,46 @@ class Target:
     history_url: str
 
 
+@dataclass(frozen=True)
+class DeleteGuard:
+    """大批删除保护：源仓库被清空或大部分 ref 消失时，整轮不更新主镜像仓。
+
+    一轮要删除的 ref 数为 n、主镜像现有 ref 总数为 total 时：
+    n == total（会删光）一律拦截；否则 n >= min_refs 且 n / total >= ratio 时拦截。
+    """
+
+    enabled: bool = True
+    ratio: float = 0.5
+    min_refs: int = 3
+
+    def trips(self, deletes: int, total: int) -> bool:
+        if not self.enabled or deletes <= 0 or total <= 0:
+            return False
+        if deletes >= total:
+            return True
+        return deletes >= self.min_refs and deletes / total >= self.ratio
+
+
+_delete_guard = DeleteGuard()
+
+
+def configure_delete_guard(guard: DeleteGuard) -> None:
+    """启动时由配置设置全局默认值。"""
+    global _delete_guard
+    _delete_guard = guard
+
+
+def delete_guard() -> DeleteGuard:
+    return _delete_guard
+
+
 @dataclass
 class PushResult:
     history_pushed: list[str] = field(default_factory=list)
     history_conflicts: list[str] = field(default_factory=list)
     gate_blocked: list[str] = field(default_factory=list)
     main_conflicts: list[str] = field(default_factory=list)
+    delete_guard: list[str] = field(default_factory=list)
     main_ok: bool = False
 
 
@@ -153,7 +187,14 @@ def _gate_allows(
     return remote in confirmed_objects
 
 
-def push_target(archive: Path, target: Target, *, env: dict[str, str] | None = None) -> PushResult:
+def push_target(
+    archive: Path,
+    target: Target,
+    *,
+    env: dict[str, str] | None = None,
+    guard: DeleteGuard | None = None,
+) -> PushResult:
+    guard = guard or _delete_guard
     with _locked(archive):
         binding = rev_parse(archive, _binding_ref(target))
         if binding is None:
@@ -196,7 +237,7 @@ def push_target(archive: Path, target: Target, *, env: dict[str, str] | None = N
                 ).stdout.strip()
                 for u in confirmed
             }
-        _reconcile_main(archive, target, confirmed_objects, confirmed, result, env)
+        _reconcile_main(archive, target, confirmed_objects, confirmed, result, env, guard)
         return result
 
 
@@ -207,6 +248,7 @@ def _reconcile_main(
     confirmed: set[str],
     result: PushResult,
     env: dict[str, str] | None,
+    guard: DeleteGuard,
 ) -> None:
     mprefix = _main_prefix(target)
     want = _read_refs(archive, "refs/heads", "refs/tags")
@@ -232,10 +274,16 @@ def _reconcile_main(
                 result.gate_blocked.append(ref)
             else:
                 to_push.append((ref, e))
+        # 大批删除保护：只看主镜像现有、档案里已没有的 ref，不管它们是否通过门禁。
+        # 在任何推送之前判定，拦截时本轮的删除和更新都不执行，不会留下半截状态。
+        # 外部直接推到主镜像、本地没有记录的 ref 属于 main_conflicts，不计入。
+        doomed = sorted(r for r in remote if r not in want and remote[r] == records.get(r))
+        if guard.trips(len(doomed), len(remote)):
+            result.delete_guard = doomed
 
     with telemetry_step("mirror"):
         _sync_records(archive, target, want, remote, records)
-        if result.gate_blocked or result.main_conflicts:
+        if result.gate_blocked or result.main_conflicts or result.delete_guard:
             return
 
         updates = [(ref, e) for ref, e in to_push if ref in want]

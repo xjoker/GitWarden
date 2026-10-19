@@ -22,6 +22,9 @@ In the container, `GW_DATA_DIR` defaults to `/data`. In a source checkout, the a
 | `GW_MIN_DISCOVERY_MINUTES` | `15` | Minimum interval accepted for a platform access. Minimum allowed setting is 1. |
 | `GW_STALL_MINUTES` | `10` | Stops a Git operation after this many minutes without progress. It does not cap a progressing run. |
 | `GW_LOG_RETENTION_DAYS` | `90` | Retention for run and activity records. Must be at least 1. |
+| `GW_DELETE_GUARD` | `on` | Mass-deletion guard for the main mirror (`on`/`off`). Turning it off restores the old behavior where an emptied source also empties the main mirror. |
+| `GW_DELETE_GUARD_RATIO` | `0.5` | Hold the main mirror when one run would delete at least this fraction of its refs (greater than 0, at most 1). Deleting every ref is always held. |
+| `GW_DELETE_GUARD_MIN_REFS` | `3` | The ratio rule applies only when at least this many refs would be deleted, so removing one branch from a small repository is not held. Must be at least 1. |
 
 Compose also reads these project-environment values:
 
@@ -49,6 +52,11 @@ stall_minutes = 10
 
 [logs]
 retention_days = 90
+
+[safety]
+delete_guard = true
+delete_guard_ratio = 0.5
+delete_guard_min_refs = 3
 ```
 
 Environment variables override the corresponding TOML values. Invalid numbers or values outside the validation range stop startup with an explanatory error. A task's sync interval and a platform access's discovery interval must also satisfy the configured minimum when saved in the WebUI.
@@ -58,6 +66,12 @@ Environment variables override the corresponding TOML values. Invalid numbers or
 Hand-created tasks default to a 60-minute sync interval. Platform-discovered tasks inherit the access's default sync interval, which is 60 minutes unless changed. Platform discovery also defaults to 60 minutes. These are task/access values; the `GW_MIN_*` settings are lower bounds.
 
 After a run, GitWarden calculates the next due time from the run's end. The effective interval can be larger than the configured value when the recent successful runs are long, and repeated failures apply exponential backoff up to six hours. A successful run clears the failure backoff. A Git operation with progress may run for hours; `GW_STALL_MINUTES` only detects a no-progress stall.
+
+## Mass-deletion guard
+
+A fetch that succeeds but returns an empty or nearly empty source (for example, a repository that was deleted and recreated empty under the same name) would otherwise delete the matching refs from every main mirror. Before any push, GitWarden counts the main-mirror refs that the run would delete. If that is every ref, or at least `delete_guard_ratio` of them and at least `delete_guard_min_refs`, the whole main-mirror update for that target is held: neither the deletions nor any other update in the same run is pushed, so the mirror is never left half-updated. The local archive and the history repository still receive the preservation tags, and the run is recorded as `delete_guard` (**Mass deletion held**) without failure backoff.
+
+The guard clears by itself on the next run once the source has its refs back. If the deletion was intentional, temporarily raise the ratio or set `GW_DELETE_GUARD=off`, restart, run the task once, and then restore the setting. Preserved refs remain recoverable from the history repository either way.
 
 ## Data layout
 

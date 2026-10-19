@@ -69,6 +69,13 @@ def _push_one(store: Store, data_dir: Path, archive: Path, row: dict) -> tuple[s
                 "gate_blocked",
                 msg("run.gate_blocked", items=", ".join(res.gate_blocked)),
             )
+        if res.delete_guard:
+            return "delete_guard", msg(
+                "run.delete_guard",
+                count=len(res.delete_guard),
+                items=", ".join(res.delete_guard[:10])
+                + (" …" if len(res.delete_guard) > 10 else ""),
+            )
         if not res.main_ok:
             return "conflict", msg("run.main_conflict", items=", ".join(res.main_conflicts))
         with _locked(archive):
@@ -285,6 +292,7 @@ def _execute(
 
     successes = 0
     failures = 0
+    held = 0
     for row in store.list_targets(task["id"]):
         if not row["bound"]:
             continue
@@ -308,6 +316,10 @@ def _execute(
         store.set_target_status(row["id"], t_status, detail)
         if t_status == "ok":
             successes += 1
+        elif t_status == "delete_guard":
+            # 主镜像被大批删除保护拦下：档案和历史仓已保全，状态为“需要处理”而非失败。
+            held += 1
+            logs.add_step(store, run_id, "target", detail, level="warn", target_id=row["id"])
         else:
             failures += 1
             logs.add_step(
@@ -321,7 +333,9 @@ def _execute(
 
     if capture_error is not None:
         raise capture_error
-    if failures and successes:
+    if held and not failures:
+        return "delete_guard"
+    if failures and (successes or held):
         return "partial"
     if failures:
         return "failed"

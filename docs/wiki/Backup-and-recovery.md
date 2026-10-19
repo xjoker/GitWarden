@@ -11,8 +11,9 @@ For each task, GitWarden:
 3. creates a local preservation tag for every old object that would be overwritten or deleted;
 4. commits the current mirror refs in the local archive;
 5. pushes new preservation tags to the history repository and confirms them with `ls-remote`;
-6. checks the main mirror's remote values and updates it only when the old value is a fast-forward ancestor or has a confirmed matching preservation object;
-7. audits the history repository against the local confirmation records.
+6. holds the whole main-mirror update when the run would delete every ref, or more than the configured share of refs (see the mass-deletion guard in [Configuration](Configuration.md));
+7. checks the main mirror's remote values and updates it only when the old value is a fast-forward ancestor or has a confirmed matching preservation object;
+8. audits the history repository against the local confirmation records.
 
 Preservation tags are named `gw/<ULID>`. Their annotated message records the source task, original ref, old and new object IDs, event type, and time. A target binding tag named `gw/binding` identifies the history repository expected by the local record. GitWarden does not overwrite an existing `gw/<ULID>` tag; a changed or missing remote tag is a target conflict or audit alert.
 
@@ -119,4 +120,4 @@ Continue using both Compose files when operating the restored deployment. The or
 | GitWarden data volume | The local archive, all collected preservation records, task metadata, and stored credentials needed to reconnect to private endpoints. |
 | Event bundle | The single preservation ref selected when the bundle was downloaded. |
 
-When a source disappears, do not delete the task or archive. The task can be marked source-gone or not-visible by discovery while its collected archive, events, and target history remain available for recovery.
+When a source disappears, do not delete the task or archive. The task can be marked source-gone or not-visible by discovery while its collected archive, events, and target history remain available for recovery. A source that is still reachable but has become empty does not empty the main mirror: the mass-deletion guard holds the mirror and preserves the deleted refs in history.
