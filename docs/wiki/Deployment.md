@@ -69,10 +69,10 @@ A source URL that starts with `/` is read inside the container, not on the host.
 
 Git refuses a repository whose top-level directory is not owned by the user running it. With the default image user, a host repository owned by another UID fails with `fatal: detected dubious ownership in repository at '/repos/src.git'`. There is no supported way to add a `safe.directory` exception from outside the application: GitWarden runs Git with `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null` and its own `HOME`, so neither `/etc/gitconfig` (including one baked into a custom image) nor `~/.gitconfig` is read, and Git itself drops `-c` and `GIT_CONFIG_COUNT` settings when it starts `upload-pack` for a local path. Make the repository owned by the container user instead (UID `10001` by default).
 
-Git checks only the owner of the top-level directory, so changing that directory is enough for GitWarden to read the repository. `chown -R` also works, but it takes write access away from every host user that pushes to the repository (see below):
+Git checks only the owner of the top-level directory, so changing that directory is enough for GitWarden to read the repository, provided its contents are readable by other users (the default with umask `022`). A repository created under umask `077` still fails after a top-level-only change, with the same `does not appear to be a git repository` message as a missing mount; use `chown -R` for such a repository. Both `chown -R` and the top-level-only change restrict host users that push to the repository (see below):
 
 ```bash
-sudo chown 10001 /srv/git/src.git        # top-level directory only
+sudo chown 10001 /srv/git/src.git        # top-level directory only; contents must be readable by others
 docker run -d \
   --name gitwarden \
   --restart unless-stopped \
@@ -95,11 +95,11 @@ Then use `/repos/src.git` as the source URL. A read-only mount is enough because
 
 ### Repositories that are still pushed to on the host
 
-After the ownership change, a host user that pushes to the repository over a local path first gets `detected dubious ownership`. After `git config --global --add safe.directory /srv/git/src.git`, a repository changed with `chown -R 10001:10001` then rejects the push with `unable to create temporary object directory`. A top-level-only `chown 10001` without group write access accepts pushes to most branches, but rejects a push to the branch `HEAD` points to with `Unable to create '/srv/git/src.git/./HEAD.lock': Permission denied`.
+After the ownership change, a host user that pushes to the repository over a local path first gets `detected dubious ownership`. After `git config --global --add safe.directory /srv/git/src.git`, a repository changed with `chown -R 10001:10001` then rejects the push with `unable to create temporary object directory`. A top-level-only `chown 10001` without group write access accepts updates to most branches, but rejects a push to the branch `HEAD` points to with `Unable to create '/srv/git/src.git/./HEAD.lock': Permission denied` and the deletion of a packed branch with `Unable to create '/srv/git/src.git/./packed-refs.lock': Permission denied`.
 
-Each of the following was tested with Git 2.47.3: a host user pushing over a local path, and GitWarden syncing the read-only mount afterwards. `<group>` is a group that the pushing users belong to.
+Each of the following was tested with Git 2.47.3: host users pushing over a local path, and GitWarden syncing the read-only mount afterwards. `<group>` is a group that the pushing users belong to; in the tests it was a supplementary group of two users with different primary groups.
 
-- **Shared group.** Make the repository group-writable with setgid directories, and give each pushing user a `safe.directory` entry:
+- **Shared group (one or more pushing users).** Make the repository group-writable with setgid directories, and give each pushing user a `safe.directory` entry:
 
   ```bash
   git --git-dir=/srv/git/src.git config core.sharedRepository group
@@ -109,7 +109,9 @@ Each of the following was tested with Git 2.47.3: a host user pushing over a loc
   git config --global --add safe.directory /srv/git/src.git   # as each pushing user
   ```
 
-- **Top-level directory with group write.** Change only the top-level directory and make it group-writable; the contents keep their current owner:
+  With two users pushing in turn, pushes to the `HEAD` branch, new branches, deletions of packed branches, force pushes and `git gc` all succeeded, and GitWarden synced every change. The same commands work after `git init --bare --shared=group` for a new repository. That command also sets `receive.denyNonFastforwards=true`, which rejects force pushes; the commands above do not, so add `git config receive.denyNonFastforwards true` if you want that. The container user is not in `<group>` and reads through the permissions for other users. If a pushing user has umask `077`, new objects are not readable by others and the next sync fails (in the test with `upload-pack: not our ref`); in that case use `core.sharedRepository 0664` and `chmod -R g+rwX,o+rX`.
+
+- **Top-level directory with group write (single pushing user).** Change only the top-level directory and make it group-writable; the contents keep their current owner. This works only when every push comes from the user that owns the repository contents. Another member of `<group>` gets `unable to create temporary object directory`; use the shared-group option for several pushing users:
 
   ```bash
   sudo chown 10001:<group> /srv/git/src.git
@@ -138,7 +140,7 @@ Alternatively, leave the repository unchanged and run the container with `--user
 docker run --rm --user 0 --volume gitwarden-data:/data --entrypoint chown gitwarden:local -R <uid>:<gid> /data
 ```
 
-That `chown` does not persist on a new, empty named volume: Docker copies the image's `/data` ownership into an empty volume when it is next mounted. Use a bind mount for a new deployment.
+That `chown` does not persist on a new, empty named volume: Docker copies the image's `/data` ownership into an empty volume when it is next mounted. Use a bind mount for a new deployment, or add `:nocopy` to the volume (`gitwarden-data:/data:nocopy`) in both the `chown` command and the first container run. Once the application has written its data, the volume is no longer empty and later runs keep the ownership without `:nocopy`.
 
 ## Persistence and lifecycle
 
