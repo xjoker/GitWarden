@@ -12,4 +12,4 @@ Login sessions are held in memory and are cleared when the service restarts. Sto
 
 ## Reporting a vulnerability
 
-Use the repository's **Security → Report a vulnerability** feature when private reporting is enabled. Do not put credentials, exploit details involving a live service, or private repository contents in a public issue. If private reporting is unavailable, open a minimal issue requesting a private contact channel without including sensitive details.
+Report vulnerabilities privately through the repository's **Security → Report a vulnerability** feature: <https://github.com/xjoker/GitWarden/security/advisories/new>. Do not put credentials, exploit details involving a live service, or private repository contents in a public issue. If you cannot use private reporting, open a **Bug report** issue titled "Security contact request", write only "security contact request" in the required text fields, choose **Other** for **Deployment**, tick the two required checkboxes under **Checks**, and wait for a maintainer to provide a private channel. Do not include any details of the vulnerability in that issue.

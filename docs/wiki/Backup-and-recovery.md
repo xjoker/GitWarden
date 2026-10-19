@@ -27,7 +27,7 @@ Clone the history repository and list its preservation tags:
 ```bash
 git clone https://example.org/invalid/history.git sample-history
 git -C sample-history tag --list 'gw/*'
-read -r -p "Preservation tag (gw/...): " preserved_tag
+printf 'Preservation tag (gw/...): '; IFS= read -r preserved_tag
 git -C sample-history show "$preserved_tag"
 ```
 
