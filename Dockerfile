@@ -9,8 +9,14 @@ RUN uv sync --frozen --no-dev
 FROM python:3.14-slim AS runtime
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends git openssh-client \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+# The runtime uses /app/.venv only; drop the base image's standalone pip.
+RUN rm -rf /usr/local/lib/python3.14/site-packages/pip \
+        /usr/local/lib/python3.14/site-packages/pip-*.dist-info \
+        /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.14
 ENV TZ=UTC PYTHONUNBUFFERED=1 GW_DATA_DIR=/data
 ARG GIT_COMMIT=unknown
 ENV GW_GIT_COMMIT=$GIT_COMMIT
