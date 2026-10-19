@@ -59,6 +59,29 @@ def test_anonymous_requests_are_rejected(client):
     assert client.post("/creds", data={"name": "x"}).status_code == 401
 
 
+def test_icons_are_public_and_do_not_expose_protected_content(client):
+    static = Path(__file__).resolve().parent.parent / "gitwarden" / "static"
+    for path, name, media_type in [
+        ("/favicon.ico", "favicon.ico", "image/x-icon"),
+        ("/favicon.svg", "favicon.svg", "image/svg+xml"),
+        ("/apple-touch-icon.png", "apple-touch-icon.png", "image/png"),
+    ]:
+        resp = client.get(path, follow_redirects=False)
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith(media_type)
+        assert resp.content == (static / name).read_bytes()
+        assert "set-cookie" not in resp.headers
+        # 图标路由不接受参数，不能借它读取其他文件。
+        probe = client.get(path, params={"name": "../web.py"}, follow_redirects=False)
+        assert probe.content == (static / name).read_bytes()
+    for path in ["/static/favicon.svg", "/static/../web.py", "/favicon.ico/x", "/gitwarden.db"]:
+        assert client.get(path, follow_redirects=False).status_code in (303, 404)
+    assert client.get("/", follow_redirects=False).headers["location"] == "/login"
+    login_page = client.get("/login").text
+    assert '<link rel="icon" href="/favicon.ico" sizes="32x32">' in login_page
+    assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' in login_page
+
+
 def test_wrong_password_is_401_and_correct_password_logs_in(client, monkeypatch):
     slept = []
     monkeypatch.setattr(time, "sleep", lambda s: slept.append(s))
