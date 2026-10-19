@@ -537,6 +537,7 @@
   "run.delete_guard": "Held: this round would delete {count} refs from the main mirror ({items}). The mirror was not changed; deleted refs are preserved in the archive and the history repo. Check the source repository.",
   "run.delete_guard_summary": "Mass deletion held: this round would delete {count} refs from the main mirror ({items}). Main mirror unchanged.",
   "run.delete_guard_summary_many": "Mass deletion held on {targets} targets: the first would lose {count} refs from its main mirror ({items}). Main mirrors unchanged.",
+  "run.partial_failures": "{count} target(s) failed.",
   "run.main_conflict": "Mirror conflict: {items}",
   "run.target_failed": "Target run failed",
   "run.archive_busy": "The archive is busy",

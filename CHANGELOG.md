@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Healthcheck follows the real listen address, warn when listening on all interfaces, tighten host validation, and small follow-ups from #10 / #13 / #14 reviews.
+
+- Docker `HEALTHCHECK` probes the address GitWarden actually listens on (via `load_config` / `probe_health`); `0.0.0.0` and `::` are checked through `127.0.0.1`, so binding to a NIC IP under `--network host` no longer stays unhealthy. `GW_DEFAULT_HOST=0.0.0.0` inside the official image is unchanged.
+- Log a startup warning when the process listens on `0.0.0.0` or `::` (host networking would expose every host interface; on the default bridge, exposure is still controlled by `-p` / `GW_BIND`).
+- Reject more invalid listen hosts before bind: IPv6 zone ids limited to `[A-Za-z0-9_.-]`, IPv4-mapped IPv6 (`::ffff:…`), and hostnames whose rightmost label is all-numeric; document that hostnames follow RFC 1123 (no underscores). Bind failures name the listen address.
+- Favicon / apple-touch links in the WebUI add `?v=<VERSION>` so browsers pick up icon changes without waiting for `max-age`.
+- Partial runs that both hold mass-deletion and fail other targets mention the failure count in the run message; document TOML `delete_guard` accepting integers `0`/`1`, external mirror conflicts during a hold, and assert archive locks are released after a stalled run.
+
 ## 20261019.2 — 2026-10-19
 
 Configurable listen address (`GW_HOST` is now honored): direct runs default to `127.0.0.1`, while the official image still listens on `0.0.0.0` inside the container. Also adds the GitWarden logo and favicon.

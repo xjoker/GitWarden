@@ -307,6 +307,10 @@ def test_stalled_run_releases_archive_lock_for_the_next_task(tmp_path: Path) -> 
     assert store.get_task(stalled_id)["last_status"] == "failed"
     assert store.get_task(healthy_id)["last_status"] == "ok"
     assert archive_path(data_dir, store.get_task(healthy_id)).exists()
+    from gitwarden.archive import _locked
+
+    with _locked(archive_path(data_dir, store.get_task(stalled_id))):
+        pass
 
 
 def test_ssh_credentials_enable_keepalive_options(tmp_path: Path) -> None:

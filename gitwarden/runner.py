@@ -70,6 +70,17 @@ def _held_summary(held: list[list[str]]) -> str | None:
     return msg("run.delete_guard_summary_many", targets=len(held), count=len(refs), items=items)
 
 
+def _partial_summary(held: list[list[str]], failure_count: int) -> str | None:
+    """partial 时同时写被拦摘要和失败目标数，避免 Logs 只看见拦截、漏掉失败。"""
+    parts: list[str] = []
+    held_text = _held_summary(held)
+    if held_text:
+        parts.append(held_text)
+    if failure_count:
+        parts.append(msg("run.partial_failures", count=failure_count))
+    return " ".join(parts) if parts else None
+
+
 def _push_one(
     store: Store,
     data_dir: Path,
@@ -361,7 +372,7 @@ def _execute(
     if held_refs and not failures:
         return "delete_guard", summary
     if failures and (successes or held_refs):
-        return "partial", summary
+        return "partial", _partial_summary(held_refs, failures)
     if failures:
         return "failed", None
     return "ok", None

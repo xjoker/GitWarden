@@ -537,6 +537,7 @@
   "run.delete_guard": "已拦截：本轮会从主镜像删除 {count} 个 ref（{items}）。主镜像未做任何改动；被删 ref 已保全到档案和历史仓。请检查来源仓库。",
   "run.delete_guard_summary": "大批删除已拦截：本轮会从主镜像删除 {count} 个 ref（{items}），主镜像未改动。",
   "run.delete_guard_summary_many": "{targets} 个目标的大批删除已拦截：第一个目标本轮会从主镜像删除 {count} 个 ref（{items}），主镜像均未改动。",
+  "run.partial_failures": "{count} 个目标失败。",
   "run.main_conflict": "主镜像冲突: {items}",
   "run.target_failed": "目标执行失败",
   "run.archive_busy": "档案仓正被占用",
