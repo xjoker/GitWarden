@@ -16,6 +16,7 @@ class ConfigError(Exception):
 @dataclass(frozen=True)
 class Config:
     data_dir: Path
+    host: str = "127.0.0.1"
     port: int = 8080
     tick_seconds: float = 30
     workers: int = 2
@@ -37,6 +38,19 @@ def _read_toml(path: Path) -> dict:
             return tomllib.load(fh)
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"配置文件格式错误 {path}: {exc}") from exc
+
+
+def _host(env: Mapping[str, str], server: Mapping) -> str:
+    """监听地址：GW_HOST > [server] host > GW_DEFAULT_HOST（镜像设为 0.0.0.0）> 127.0.0.1。"""
+    raw = (env.get("GW_HOST") or "").strip()
+    if raw:
+        return raw
+    if "host" in server:
+        value = server["host"]
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(f"配置项 [server] host 必须是非空字符串: {value!r}")
+        return value.strip()
+    return (env.get("GW_DEFAULT_HOST") or "").strip() or "127.0.0.1"
 
 
 def _number(env: Mapping[str, str], key: str, fallback, cast):
@@ -119,6 +133,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
         raise ConfigError("配置文件里的 [safety] 必须是一个表")
 
     port = _number(env, "GW_PORT", server.get("port", 8080), int)
+    host = _host(env, server)
     tick = _number(env, "GW_TICK_SECONDS", scheduler.get("tick_seconds", 30), float)
     workers = _number(env, "GW_WORKERS", scheduler.get("workers", 2), int)
     min_sync = _number(
@@ -163,6 +178,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     return _validate(
         Config(
             data_dir=data_dir,
+            host=host,
             port=port,
             tick_seconds=tick,
             workers=workers,
