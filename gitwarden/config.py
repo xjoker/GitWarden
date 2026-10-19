@@ -85,13 +85,15 @@ def _check_host(value: str, where: str) -> str:
 def healthcheck_url(env: Mapping[str, str] | None = None) -> str:
     """Docker HEALTHCHECK 应探测的 URL：用实际生效的 host/port。
 
-    `0.0.0.0` / `::` 改连回环，否则按绑定地址连（含网卡 IP），避免 host 网络下
-    绑网卡 IP 时一直 unhealthy。
+    `0.0.0.0` 改连 `127.0.0.1`，`::` 改连 `::1`（IPv6 回环；URL 写成 `[::1]`），
+    否则按绑定地址连（含网卡 IP），避免 host 网络下绑网卡 IP 时一直 unhealthy。
     """
     config = load_config(env)
     host = config.host
-    if host in ("0.0.0.0", "::"):
+    if host == "0.0.0.0":
         host = "127.0.0.1"
+    elif host == "::":
+        host = "::1"
     if "%" in host:
         addr, zone = host.rsplit("%", 1)
         host_part = f"[{addr}%25{zone}]"

@@ -283,8 +283,8 @@ def test_healthcheck_url_rewrites_all_interfaces(tmp_path: Path) -> None:
     assert healthcheck_url(_env(tmp_path, GW_DEFAULT_HOST="0.0.0.0", GW_PORT="9090")).endswith(
         "://127.0.0.1:9090/health"
     )
-    assert healthcheck_url(_env(tmp_path, GW_HOST="::", GW_PORT="9091")).endswith(
-        "://127.0.0.1:9091/health"
+    assert (
+        healthcheck_url(_env(tmp_path, GW_HOST="::", GW_PORT="9091")) == "http://[::1]:9091/health"
     )
     assert (
         healthcheck_url(_env(tmp_path, GW_HOST="172.30.0.2", GW_PORT="9092"))
@@ -292,6 +292,14 @@ def test_healthcheck_url_rewrites_all_interfaces(tmp_path: Path) -> None:
     )
     assert (
         healthcheck_url(_env(tmp_path, GW_HOST="::1", GW_PORT="9093")) == "http://[::1]:9093/health"
+    )
+    assert (
+        healthcheck_url(_env(tmp_path, GW_HOST="2001:db8::1", GW_PORT="9094"))
+        == "http://[2001:db8::1]:9094/health"
+    )
+    assert (
+        healthcheck_url(_env(tmp_path, GW_HOST="fe80::1%eth0", GW_PORT="9095"))
+        == "http://[fe80::1%25eth0]:9095/health"
     )
 
 

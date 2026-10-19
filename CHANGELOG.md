@@ -4,7 +4,7 @@
 
 Healthcheck follows the real listen address, warn when listening on all interfaces, tighten host validation, and small follow-ups from #10 / #13 / #14 reviews.
 
-- Docker `HEALTHCHECK` probes the address GitWarden actually listens on (via `load_config` / `probe_health`); `0.0.0.0` and `::` are checked through `127.0.0.1`, so binding to a NIC IP under `--network host` no longer stays unhealthy. `GW_DEFAULT_HOST=0.0.0.0` inside the official image is unchanged.
+- Docker `HEALTHCHECK` probes the address GitWarden actually listens on (via `load_config` / `probe_health`); `0.0.0.0` is checked through `127.0.0.1` and `::` through `[::1]`, so binding to a NIC IP under `--network host` no longer stays unhealthy. `GW_DEFAULT_HOST=0.0.0.0` inside the official image is unchanged.
 - Log a startup warning when the process listens on `0.0.0.0` or `::` (host networking would expose every host interface; on the default bridge, exposure is still controlled by `-p` / `GW_BIND`).
 - Reject more invalid listen hosts before bind: IPv6 zone ids limited to `[A-Za-z0-9_.-]`, IPv4-mapped IPv6 (`::ffff:…`), and hostnames whose rightmost label is all-numeric; document that hostnames follow RFC 1123 (no underscores). Bind failures name the listen address.
 - Favicon / apple-touch links in the WebUI add `?v=<VERSION>` so browsers pick up icon changes without waiting for `max-age`.
