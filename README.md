@@ -6,6 +6,10 @@ GitWarden is a self-hosted Git history mirror. It periodically fetches a source 
 
 English · [简体中文](README.zh-CN.md)
 
+![Terminal demo: a force push while the history repository is offline holds the main mirror, and the old commit stays preserved](docs/demo.gif)
+
+*Demo (about 50 seconds, local bare repositories): GitWarden mirrors a source; the history repository then rejects pushes and the source force-pushes `main` and fast-forwards `dev`. The safety gate holds the whole main mirror (both branches), the old `main` commit stays in the local archive as `refs/preserved/<ULID>`, and once the history repository accepts pushes again the preservation tag is confirmed first and the mirror catches up.*
+
 ![GitWarden overview](docs/images/overview.jpg)
 
 ## What it protects
@@ -19,7 +23,23 @@ When a collected branch is force-pushed or deleted, or a collected tag is rewrit
 
 GitWarden protects states it has actually collected. A change that appears and disappears between polling runs cannot be recovered. Git objects are in scope; LFS payloads and submodule repositories are not copied. The UI detects these references and marks the task as an incomplete backup so that the limitation is visible.
 
+### When the safety gate holds a target
+
+Before GitWarden changes a ref on a main mirror, the change must be a fast-forward, or the object being overwritten or deleted must already be confirmed in that target's history repository during the same run. While the history repository is healthy, a force push, branch deletion, or tag rewrite therefore passes automatically after its preservation tag is confirmed. The change is held when the preserved object cannot be confirmed there, for example because the history repository is unreachable or rejects the push; the target then reports **Blocked by safety gate** (`gate_blocked`). The main mirror is also held when any of its refs no longer matches the value GitWarden last pushed (**Mirror conflict**, `conflict`), which usually means another writer changed it.
+
+A hold applies to the target's whole main mirror, not only to the affected ref: if any ref is blocked or in conflict, GitWarden pushes no ref updates or deletions to that main mirror in that run, including ordinary fast-forwards of other branches and tags. The source is still captured into the local archive, the old object stays preserved locally as `refs/preserved/<ULID>`, each run still tries to push pending preservation tags to the history repository, and other targets of the same task are processed independently. To recover, fix the cause: make the history repository reachable and writable for GitWarden, or stop the unexpected writer and return the conflicting ref to the value GitWarden last pushed. Then use **Retry** on the target card or wait for the next scheduled run. GitWarden confirms the pending `gw/*` tags first and then brings the main mirror up to date in one push. There is no switch that pushes the main mirror past the gate. See [Troubleshooting](docs/wiki/Troubleshooting.md#target-run-is-blocked-or-conflicted).
+
 The history repository is not a second full mirror. It contains preserved versions, while the current refs remain in the main mirror and the local archive. Keep the main mirror or the local data volume when you need the latest collected state.
+
+## Try the published image
+
+For a quick trial without a checkout, run the published image with a named data volume and a loopback-only port, then open <http://127.0.0.1:8080>:
+
+```bash
+docker run -d --name gitwarden --restart unless-stopped -e GW_ADMIN_PASSWORD='change-me-to-a-long-random-password' -p 127.0.0.1:8080:8080 -v gitwarden-data:/data ghcr.io/xjoker/gitwarden:20261016.1
+```
+
+Replace the password first. A password given with `-e` stays in your shell history; for a longer-lived installation, put it in an environment file and use `--env-file` as shown in [Deployment](docs/wiki/Deployment.md#plain-docker), or use Docker Compose below. Do not publish the port on a public interface; see [Security](SECURITY.md).
 
 ## Quick start with Docker Compose
 
@@ -44,7 +64,7 @@ docker compose logs -f gitwarden
 
 The Compose configuration uses the project `.env`, the named volume `gitwarden-data`, and `127.0.0.1:8080`. The default image is built locally as `gitwarden:local`; Compose selects the host architecture automatically. The container runs as UID/GID `10001` and stores the application database, archives, credentials, and temporary work data under `/data`.
 
-Release images are published to `ghcr.io/xjoker/gitwarden` after their `vYYYYMMDD.N` release tag passes CI. To run a published image, set `GW_IMAGE` and pull without rebuilding:
+Release images are published to `ghcr.io/xjoker/gitwarden` after their `vYYYYMMDD.N` release tag passes CI. Each release pushes the version without the `v` (for example `20261016.1`) and `latest`. To run a published image, set `GW_IMAGE` and pull without rebuilding:
 
 ```bash
 GW_IMAGE=ghcr.io/xjoker/gitwarden:20261016.1 docker compose pull
@@ -103,5 +123,3 @@ The response includes the application version and the build's Git commit when th
 ## License
 
 GitWarden is licensed under the [Apache License 2.0](LICENSE). Third-party dependencies retain their own licenses.
-
-The public owner/repository URL is still to be assigned before publishing repository and image links.

@@ -8,6 +8,10 @@ GitWarden 是一个自托管的 Git 历史镜像工具。它按计划把来源�
 
 [English](README.md) · 简体中文
 
+![终端演示：历史仓离线时来源被强推，主镜像整体暂停更新，旧 commit 仍被保全](docs/demo.gif)
+
+*演示（约 50 秒，使用本地裸仓库，终端界面为英文）：GitWarden 先完成一次镜像；随后历史仓拒绝推送，来源对 `main` 执行 force push、对 `dev` 正常快进。安全门禁让整个主镜像暂停更新（两个分支都不推送），旧的 `main` commit 以 `refs/preserved/<ULID>` 留在本地档案；历史仓恢复后，先确认保全标签，再让主镜像一次追上。*
+
 ![GitWarden 总览](docs/images/overview.jpg)
 
 ## 它保护什么
@@ -21,7 +25,23 @@ GitWarden 是一个自托管的 Git 历史镜像工具。它按计划把来源�
 
 GitWarden 只保护已经采集到的状态。两次轮询之间出现又消失的变更无法恢复。范围包含 Git 对象，不包含 LFS 文件内容和子模块仓库；界面会识别这些引用并将任务标为备份不完整。
 
+### 安全门禁拦截时会发生什么
+
+GitWarden 修改主镜像上的某个 ref 之前，要求这次修改是快进，或者将被覆盖、删除的旧对象已经在本轮运行中被该目标的历史仓确认。因此历史仓正常时，force push、删分支和改 tag 在保全标签确认后会自动放行。如果旧对象无法在历史仓确认，例如历史仓不可达或拒绝推送，这次修改就会被拦下，目标显示 **Blocked by safety gate**（`gate_blocked`，门禁阻断）。如果主镜像上任一 ref 与 GitWarden 上次推送的值不一致（**Mirror conflict**，`conflict`，通常意味着有其他写入方），主镜像同样会暂停。
+
+拦截范围是该目标的整个主镜像，而不只是出问题的那个 ref：只要有一个 ref 被门禁拦下或存在冲突，本轮就不会向这个主镜像推送任何 ref 的更新或删除，其他分支和标签的普通快进也一样暂停。此时来源仍会继续采集到本地档案，旧对象以 `refs/preserved/<ULID>` 保留在本地，每轮仍会尝试把待推送的保全标签推到历史仓，同一任务的其他目标也会各自独立处理。恢复方法是先排除原因：让历史仓恢复可达并允许 GitWarden 写入，或者停掉意外的写入方，把冲突的 ref 恢复为 GitWarden 上次推送的值；然后在目标卡片上点 **Retry**，或等待下一次计划运行。GitWarden 会先确认待推送的 `gw/*` 标签，再一次性把主镜像更新到最新状态。没有绕过门禁、强制推送主镜像的开关。详见 [Troubleshooting](docs/wiki/Troubleshooting.md#target-run-is-blocked-or-conflicted)。
+
 历史仓不是第二个完整镜像。它保存被覆盖或删除的历史版本，当前引用仍在主镜像仓和本地档案中。需要最新已采集状态时，请保留主镜像仓或 GitWarden 数据卷。
+
+## 直接试用发布镜像
+
+不想先获取源码时，可以用命名数据卷和仅绑定本机回环地址的端口直接运行发布镜像，然后打开 <http://127.0.0.1:8080>：
+
+```bash
+docker run -d --name gitwarden --restart unless-stopped -e GW_ADMIN_PASSWORD='change-me-to-a-long-random-password' -p 127.0.0.1:8080:8080 -v gitwarden-data:/data ghcr.io/xjoker/gitwarden:20261016.1
+```
+
+运行前先替换密码。用 `-e` 传入的密码会留在 shell 历史里；长期使用时，请把密码写进环境变量文件并按 [Deployment](docs/wiki/Deployment.md#plain-docker) 使用 `--env-file`，或者使用下面的 Docker Compose 方式。不要把端口发布到公网接口，见 [Security](SECURITY.md)。
 
 ## 用 Docker Compose 快速启动
 
@@ -46,14 +66,14 @@ docker compose logs -f gitwarden
 
 Compose 配置使用项目目录的 `.env`、名为 `gitwarden-data` 的 named volume，以及 `127.0.0.1:8080`。默认镜像在本地构建为 `gitwarden:local`，Compose 会按主机架构自动选择 amd64 或 arm64。容器以 UID/GID `10001` 运行，应用数据库、档案、凭据和临时工作数据都在 `/data` 下。
 
-首次公开发布的镜像只有在 `vYYYYMMDD.N` 发布 tag 通过 CI 后才会推送到 GHCR。在公开 owner/repository 和发布镜像确定前，请使用本地构建。发布后如需使用镜像，可设置 `GW_IMAGE` 并跳过重新构建：
+发布镜像在对应的 `vYYYYMMDD.N` 发布 tag 通过 CI 后推送到 `ghcr.io/xjoker/gitwarden`，每次发布推送版本 tag（不带 `v`，例如 `20261016.1`）和 `latest`。如需使用发布镜像，可设置 `GW_IMAGE` 并跳过本地构建：
 
 ```bash
-GW_IMAGE=ghcr.io/sample/gitwarden:20261010.1 docker compose pull
-GW_IMAGE=ghcr.io/sample/gitwarden:20261010.1 docker compose up -d --no-build
+GW_IMAGE=ghcr.io/xjoker/gitwarden:20261016.1 docker compose pull
+GW_IMAGE=ghcr.io/xjoker/gitwarden:20261016.1 docker compose up -d --no-build
 ```
 
-`sample` 只是示例组织，请替换为实际发布镜像路径。
+可用版本和发布说明见 [Releases](https://github.com/xjoker/GitWarden/releases)。
 
 普通 Docker 部署见 [Deployment](docs/wiki/Deployment.md)；配置、数据卷备份和恢复见 [Wiki 源文件索引](docs/wiki/Home.md)。
 
@@ -100,10 +120,8 @@ curl --fail http://127.0.0.1:8080/health
 - [平台接入](docs/wiki/Platforms.md)
 - [故障排查](docs/wiki/Troubleshooting.md)
 
+[发布验证记录](docs/Validation.md)
+
 ## 许可证
 
 GitWarden 采用 [Apache License 2.0](LICENSE)。第三方依赖保留各自的许可证。
-
-公开 owner/repository 地址仍待确定，发布仓库和镜像链接前需补齐。
-
-[发布验证记录](docs/Validation.md)

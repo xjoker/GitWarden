@@ -39,7 +39,7 @@ The history repository also carries `gw/binding`. If its binding tag does not ma
 | `audit_alert` | A previously confirmed history tag is missing or has a different object. | Treat the target as incomplete, stop writes, and restore from the local archive or an independent volume backup. |
 | `error` or `failed` | Git, authentication, or a platform operation returned an error. | Read the target step in the run log, correct the reported cause, then use **Retry**. |
 
-The main mirror is not updated when the history gate or remote-value check fails. A target can therefore remain behind while the local archive continues collecting new source states; once the target is healthy, the pending preservation tags are pushed before the main mirror catches up.
+The main mirror is not updated when the history gate or remote-value check fails. The hold covers the target's whole main mirror: if any ref is `gate_blocked` or in `conflict`, no ref of that main mirror is updated or deleted in that run, including ordinary fast-forwards of other branches and tags. Preservation tags are still pushed to the history repository when it accepts them, and other targets continue independently. A target can therefore remain behind while the local archive continues collecting new source states; once the target is healthy, the pending preservation tags are pushed before the main mirror catches up.
 
 ## Platform discovery or provisioning fails
 

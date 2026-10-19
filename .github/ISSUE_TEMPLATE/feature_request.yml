@@ -1,0 +1,38 @@
+name: Feature request
+description: Suggest an improvement or new capability.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        GitWarden's primary contract is to preserve captured Git history before mirroring a destructive upstream change. Please describe how the request relates to that contract. Do not include credentials or private repository details.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what prevents it today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the behavior you would like, including the WebUI, configuration, or Git refs involved.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Effect on history preservation
+      description: Could this change allow a main mirror update before old objects are confirmed in the history repository, or change existing `gw/*` tags?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and the [user guide](https://github.com/xjoker/GitWarden/blob/main/docs/wiki/Home.md).
+          required: true

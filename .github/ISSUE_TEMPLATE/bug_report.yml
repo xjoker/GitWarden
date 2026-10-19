@@ -1,0 +1,81 @@
+name: Bug report
+description: Report incorrect behavior in GitWarden.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. **Never paste credentials, tokens, SSH keys, private repository URLs, or private repository contents.** Replace them with example values such as `https://git.example.com/demo/app.git`.
+        Security issues must not be reported here; see [SECURITY.md](https://github.com/xjoker/GitWarden/blob/main/SECURITY.md).
+  - type: textarea
+    id: health
+    attributes:
+      label: Version (`/health` output)
+      description: Output of `curl --fail http://127.0.0.1:8080/health`.
+      placeholder: '{"version":"20261016.1","git_commit":"..."}'
+      render: json
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Docker Compose (local build)
+        - Docker Compose (published image)
+        - Plain Docker
+        - Python (`uv run python -m gitwarden`)
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: endpoints
+    attributes:
+      label: Source and target endpoints
+      multiple: true
+      options:
+        - HTTPS
+        - SSH
+        - Local path
+        - Gitea platform access
+        - Forgejo platform access
+        - GitHub (manual)
+        - Other
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Create a task with ...
+        2. Force-push the source ...
+        3. Run the task ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the target status shown on the task page (for example `gate_blocked`, `conflict`, `history_conflict`, `audit_alert`).
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Run steps from **Logs** or `docker compose logs gitwarden`. Review and redact before posting.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I removed credentials, tokens, keys, and private repository details from this report.
+          required: true
+        - label: I searched existing issues and the [Troubleshooting](https://github.com/xjoker/GitWarden/blob/main/docs/wiki/Troubleshooting.md) guide.
+          required: true
