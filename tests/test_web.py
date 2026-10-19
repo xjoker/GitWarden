@@ -1,3 +1,4 @@
+import inspect
 import re
 import time
 from pathlib import Path
@@ -9,7 +10,7 @@ from gitwarden.config import Config
 from gitwarden.db import Store
 from gitwarden.git import run
 from gitwarden.runner import run_task
-from gitwarden.web import create_app
+from gitwarden.web import ICON_FILES, create_app
 from tests.conftest import commit, make_source
 
 PASSWORD = "pw-test-123"
@@ -57,6 +58,46 @@ def test_anonymous_requests_are_rejected(client):
     assert resp.headers["location"] == "/login"
     assert client.post("/tasks/new", data={"name": "x"}).status_code == 401
     assert client.post("/creds", data={"name": "x"}).status_code == 401
+
+
+def test_icons_are_public_and_do_not_expose_protected_content(client):
+    static = Path(__file__).resolve().parent.parent / "gitwarden" / "static"
+    for path, name, media_type in [
+        ("/favicon.ico", "favicon.ico", "image/x-icon"),
+        ("/favicon.svg", "favicon.svg", "image/svg+xml"),
+        ("/apple-touch-icon.png", "apple-touch-icon.png", "image/png"),
+    ]:
+        resp = client.get(path, follow_redirects=False)
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith(media_type)
+        assert resp.content == (static / name).read_bytes()
+        assert "set-cookie" not in resp.headers
+        assert resp.headers["cache-control"] == "public, max-age=86400"
+        assert resp.headers["x-content-type-options"] == "nosniff"
+        # 图标路由不接受参数，不能借它读取其他文件。
+        probe = client.get(path, params={"name": "../web.py"}, follow_redirects=False)
+        assert probe.content == (static / name).read_bytes()
+    for path in ["/static/favicon.svg", "/static/../web.py", "/favicon.ico/x", "/gitwarden.db"]:
+        assert client.get(path, follow_redirects=False).status_code == 404
+    assert client.get("/", follow_redirects=False).headers["location"] == "/login"
+    login_page = client.get("/login").text
+    assert '<link rel="icon" href="/favicon.ico" sizes="32x32">' in login_page
+    assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' in login_page
+
+
+def test_icon_routes_take_no_parameters(client):
+    # 结构断言：不管参数叫什么名字，图标路由都不能接收任何输入。
+    routes = [r for r in client.app.routes if getattr(r, "path", None) in ICON_FILES]
+    assert sorted(r.path for r in routes) == sorted(ICON_FILES)
+    for route in routes:
+        path = route.path
+        dep = route.dependant
+        assert not dep.query_params, path
+        assert not dep.path_params, path
+        assert not dep.body_params, path
+        assert not dep.header_params and not dep.cookie_params, path
+        assert not dep.dependencies, path
+        assert not inspect.signature(route.endpoint).parameters, path
 
 
 def test_wrong_password_is_401_and_correct_password_logs_in(client, monkeypatch):
