@@ -63,6 +63,34 @@ curl --fail http://127.0.0.1:8080/health
 
 `docker volume create` is a one-time command. The container must retain write access to `/data`; the image's application user is UID/GID `10001`. If a bind mount is used instead of the named volume, create the directory first and assign it to `10001:10001`.
 
+## Local source repositories
+
+A source URL that starts with `/` is read inside the container, not on the host. Mount the host repository and enter the container path in the wizard. Without the mount, the sync fails with `fatal: '/srv/git/src.git' does not appear to be a git repository`.
+
+Git refuses a repository that is not owned by the user running it. With the default image user, a host repository owned by another UID fails with `fatal: detected dubious ownership in repository at '/repos/src.git'`. GitWarden ignores global and system Git configuration, so `safe.directory` cannot be set from outside the application; make the repository owned by UID `10001` instead:
+
+```bash
+sudo chown -R 10001:10001 /srv/git/src.git
+docker run -d \
+  --name gitwarden \
+  --restart unless-stopped \
+  --env-file .env \
+  --publish 127.0.0.1:8080:8080 \
+  --volume gitwarden-data:/data \
+  --volume /srv/git/src.git:/repos/src.git:ro \
+  gitwarden:local
+```
+
+With Compose, add the mount to the service's existing `volumes` list:
+
+```yaml
+    volumes:
+      - gitwarden-data:/data
+      - /srv/git/src.git:/repos/src.git:ro
+```
+
+Then use `/repos/src.git` as the source URL. A read-only mount is enough because a source is only fetched. After the ownership change, anything that pushes to the host repository must run as UID `10001` or keep that ownership. Alternatively, run the container with `--user` set to the repository owner's UID:GID and mount `/data` from a host directory owned by the same UID, so the application can still write its data.
+
 ## Persistence and lifecycle
 
 The named volume contains the SQLite database, local bare archives, stored credentials, and temporary work data. Keep `.env` separately because it contains the administrator password. `docker compose down` leaves the named volume in place. `docker compose down -v` removes volumes and therefore can destroy the only local copy of the collected history; use it only when that data has been backed up and removal is intentional.
