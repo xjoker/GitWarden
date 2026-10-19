@@ -72,6 +72,8 @@ GW_IMAGE=ghcr.io/sample/gitwarden:20261010.1 docker compose up -d --no-build
 
 核心接受匿名、HTTPS、SSH、SCP 风格 SSH 和本地绝对路径 Git 端点。HTTPS 凭据通过 Git askpass 传递；SSH 使用临时私钥文件、严格主机密钥校验，操作结束后删除临时文件。
 
+本地绝对路径在 GitWarden 进程内解析。用 Docker 部署时，没有挂进容器的宿主机路径会在同步时失败，报 `does not appear to be a git repository`。请把仓库挂进容器，并填写容器内路径，例如 `/repos/src.git`。属主和容器用户不一致的仓库会被 Git 拒绝（`detected dubious ownership`），所以挂进去的仓库属主必须是容器用户（默认 UID `10001`；Git 只检查顶层目录，例如 `sudo chown 10001 /srv/git/src.git`）。来源只需要只读挂载。`docker run` 和 Compose 示例，以及宿主机上仍有人推送时的做法，见 [Deployment](docs/wiki/Deployment.md#local-source-repositories)。
+
 可选平台集成目前只支持 **Gitea** 和 **Forgejo**。它可以发现仓库、按 owner 和通配规则筛选、创建目标、加固目标，并报告当前令牌可见的仓库级/组织级/系统级 webhook 元数据。平台接入必须使用包含用户名和令牌的 HTTPS 凭据；按操作需要，令牌权限应包含 `read:admin`、`write:repository`、`write:organization` 和 `write:user`。
 
 GitHub 没有发现或自动建库适配器。请在三步向导中手工填写 GitHub 来源和两个目标 URL，并遵守目标仓库为空、私有且单一写入方的规则。
