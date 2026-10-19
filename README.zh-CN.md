@@ -119,8 +119,10 @@ curl --fail http://127.0.0.1:8080/health
 - [备份与恢复](docs/wiki/Backup-and-recovery.md)
 - [平台接入](docs/wiki/Platforms.md)
 - [故障排查](docs/wiki/Troubleshooting.md)
+- [发布验证记录](docs/Validation.md)
+- [发布流程（维护者）](docs/Publishing.md)
 
-[发布验证记录](docs/Validation.md)
+以上文档目前只有英文版。
 
 ## 许可证
 

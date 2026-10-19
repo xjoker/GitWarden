@@ -117,8 +117,10 @@ The response includes the application version and the build's Git commit when th
 - [Backup and recovery](docs/wiki/Backup-and-recovery.md)
 - [Platforms](docs/wiki/Platforms.md)
 - [Troubleshooting](docs/wiki/Troubleshooting.md)
+- [Release validation](docs/Validation.md)
+- [Publishing (maintainers)](docs/Publishing.md)
 
-[Release validation](docs/Validation.md)
+The guides are in English. A Simplified Chinese overview is in [README.zh-CN.md](README.zh-CN.md).
 
 ## License
 
