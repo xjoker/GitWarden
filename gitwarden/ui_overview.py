@@ -48,6 +48,7 @@ _RUN_LABELS = {
     "failed": "common.status.failed",
     "busy": "common.status.busy",
     "partial": "tasks.run.partial",
+    "delete_guard": "tasks.run.delete_guard",
     "running": "tasks.run.running",
 }
 
@@ -62,10 +63,21 @@ def _datetime(value: str | None) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _target_summary(target: dict[str, Any]) -> dict[str, Any]:
+def source_failing(task: dict[str, Any]) -> bool:
+    """最近一次运行因来源采集失败（404 / 401 / 仓库不存在等）而失败。
+
+    采集成功但所有目标都失败时也是 failed，此时目标本身已不是 ok，不受影响。
+    """
+    return task.get("last_status") == "failed"
+
+
+def _target_summary(target: dict[str, Any], task: dict[str, Any] | None = None) -> dict[str, Any]:
     if not target.get("bound"):
         status_key = "tasks.target.unbound"
         status_class = ""
+    elif target.get("last_status") == "ok" and task is not None and source_failing(task):
+        status_key = "tasks.target.source_failing"
+        status_class = "warn"
     elif target.get("last_status") == "ok":
         status_key = "tasks.target.healthy"
         status_class = "ok"
@@ -128,7 +140,7 @@ def task_summary(
 ) -> dict[str, Any]:
     """汇总任务的备份、调度和管理状态。"""
 
-    targets = [_target_summary(row) for row in store.list_targets(task["id"])]
+    targets = [_target_summary(row, task) for row in store.list_targets(task["id"])]
     incomplete = (
         not targets
         or any(not target["bound"] or target["last_status"] != "ok" for target in targets)
@@ -141,7 +153,10 @@ def task_summary(
     overdue = _overdue_seconds(task, interval) if task.get("enabled") else 0.0
     missing_targets = not targets
     target_attention = any(target["status_key"] != "tasks.target.healthy" for target in targets)
-    source_failure = bool(task.get("last_status") and task.get("last_status") != "ok")
+    # 大批删除保护拦截时来源采集是成功的，交给目标状态显示“需要处理”。
+    source_failure = bool(
+        task.get("last_status") and task.get("last_status") not in {"ok", "delete_guard"}
+    )
     managed_state_attention = str(task.get("managed_state") or "active") in {
         "not_visible",
         "excluded",
@@ -175,7 +190,7 @@ def task_summary(
         status_key = "needs_attention"
     elif incomplete:
         status_key = "incomplete"
-    elif task.get("last_status") and task.get("last_status") != "ok":
+    elif task.get("last_status") and task.get("last_status") not in {"ok", "delete_guard"}:
         status_key = "failing"
     else:
         status_key = "healthy"

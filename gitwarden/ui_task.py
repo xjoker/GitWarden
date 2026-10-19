@@ -230,8 +230,11 @@ def _target_view(data_dir: Path, task: dict[str, Any], target: dict[str, Any]) -
         history_count = "—"
     else:
         history_count = f"{confirmed} / {total}"
+    failing_source = task.get("last_status") == "failed" and target.get("last_status") == "ok"
     if not target.get("bound"):
         status_key, status_class = "task.target.unbound", "warn"
+    elif failing_source:
+        status_key, status_class = "task.target.source_failing", "warn"
     elif target.get("last_status") == "ok":
         status_key, status_class = "task.target.healthy", "ok"
     elif target.get("last_status"):
@@ -245,7 +248,8 @@ def _target_view(data_dir: Path, task: dict[str, Any], target: dict[str, Any]) -
         "history_count": history_count,
         "history_total": total,
         "history_confirmed": confirmed,
-        "attention": status_key != "task.target.healthy",
+        "attention": status_key not in {"task.target.healthy", "task.target.source_failing"},
+        "source_failing": failing_source,
     }
 
 

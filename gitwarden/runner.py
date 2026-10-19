@@ -56,7 +56,27 @@ def _cred(store: Store, cred_id: int | None) -> dict | None:
     return store.get_cred(cred_id) if cred_id else None
 
 
-def _push_one(store: Store, data_dir: Path, archive: Path, row: dict) -> tuple[str, str]:
+_SUMMARY_REFS = 5
+
+
+def _held_summary(held: list[list[str]]) -> str | None:
+    """拦截那一轮写进 run.message 的一句话摘要：被删 ref 数量和前几个 ref 名。"""
+    if not held:
+        return None
+    refs = held[0]
+    items = ", ".join(refs[:_SUMMARY_REFS]) + (" …" if len(refs) > _SUMMARY_REFS else "")
+    if len(held) == 1:
+        return msg("run.delete_guard_summary", count=len(refs), items=items)
+    return msg("run.delete_guard_summary_many", targets=len(held), count=len(refs), items=items)
+
+
+def _push_one(
+    store: Store,
+    data_dir: Path,
+    archive: Path,
+    row: dict,
+    held: list[list[str]] | None = None,
+) -> tuple[str, str]:
     target = _target(row)
     with git_env(_cred(store, row["cred_id"]), data_dir / "work") as env:
         res = push_target(archive, target, env=env)
@@ -68,6 +88,15 @@ def _push_one(store: Store, data_dir: Path, archive: Path, row: dict) -> tuple[s
             return (
                 "gate_blocked",
                 msg("run.gate_blocked", items=", ".join(res.gate_blocked)),
+            )
+        if res.delete_guard:
+            if held is not None:
+                held.append(list(res.delete_guard))
+            return "delete_guard", msg(
+                "run.delete_guard",
+                count=len(res.delete_guard),
+                items=", ".join(res.delete_guard[:10])
+                + (" …" if len(res.delete_guard) > 10 else ""),
             )
         if not res.main_ok:
             return "conflict", msg("run.main_conflict", items=", ".join(res.main_conflicts))
@@ -186,9 +215,11 @@ def _scan(archive: Path) -> list[str]:
 
 
 def _has_mirror_refs(archive: Path) -> bool:
+    """档案里有镜像 ref，或者曾经保全过 ref（源被清空后），都不算首次备份。"""
     if not archive.exists():
         return False
-    return bool(run(archive, "for-each-ref", "refs/heads", "refs/tags").stdout.strip())
+    out = run(archive, "for-each-ref", "--count=1", "refs/heads", "refs/tags", "refs/preserved")
+    return bool(out.stdout.strip())
 
 
 def _archive_size(archive: Path) -> int:
@@ -223,7 +254,8 @@ def _execute(
     run_id: int,
     *,
     detailed: bool,
-) -> str:
+) -> tuple[str, str | None]:
+    """返回 (运行状态, 运行摘要)；摘要目前只在有目标被大批删除保护拦下时给出。"""
     archive = archive_path(data_dir, task)
     init_archive(archive)
     access = store.get_access(task["access_id"]) if task["access_id"] else None
@@ -285,6 +317,7 @@ def _execute(
 
     successes = 0
     failures = 0
+    held_refs: list[list[str]] = []
     for row in store.list_targets(task["id"]):
         if not row["bound"]:
             continue
@@ -292,7 +325,7 @@ def _execute(
             t_status, detail = _observed(
                 store,
                 run_id,
-                lambda row=row: _push_one(store, data_dir, archive, row),
+                lambda row=row: _push_one(store, data_dir, archive, row, held_refs),
                 step_name="target",
                 target_id=row["id"],
                 detailed=detailed,
@@ -308,6 +341,9 @@ def _execute(
         store.set_target_status(row["id"], t_status, detail)
         if t_status == "ok":
             successes += 1
+        elif t_status == "delete_guard":
+            # 主镜像被大批删除保护拦下：档案和历史仓已保全，状态为“需要处理”而非失败。
+            logs.add_step(store, run_id, "target", detail, level="warn", target_id=row["id"])
         else:
             failures += 1
             logs.add_step(
@@ -321,11 +357,14 @@ def _execute(
 
     if capture_error is not None:
         raise capture_error
-    if failures and successes:
-        return "partial"
+    summary = _held_summary(held_refs)
+    if held_refs and not failures:
+        return "delete_guard", summary
+    if failures and (successes or held_refs):
+        return "partial", summary
     if failures:
-        return "failed"
-    return "ok"
+        return "failed", None
+    return "ok", None
 
 
 def _execution_context(progress: Callable[[str], None]):
@@ -379,7 +418,7 @@ def run_task(store: Store, data_dir: Path, task_id: int) -> bool | None:
 
     try:
         with _execution_context(progress):
-            status = _execute(store, data_dir, task, run_id, detailed=detailed)
+            status, message = _execute(store, data_dir, task, run_id, detailed=detailed)
             captured = True
     except ArchiveBusy:
         captured = None
@@ -404,12 +443,13 @@ def retry_target(store: Store, data_dir: Path, target_id: int) -> str:
     detailed = bool(task["detailed_logging"])
     status = "failed"
     detail = msg("run.target_failed")
+    held: list[list[str]] = []
     try:
         with _execution_context(lambda _text: None):
             status, detail = _observed(
                 store,
                 run_id,
-                lambda: _push_one(store, data_dir, archive, row),
+                lambda: _push_one(store, data_dir, archive, row, held),
                 step_name="target",
                 target_id=target_id,
                 detailed=detailed,
@@ -419,7 +459,12 @@ def retry_target(store: Store, data_dir: Path, target_id: int) -> str:
     except Exception as exc:
         status, detail = "error", logs.redact_text(store, str(exc)) or msg("run.target_failed")
     store.set_target_status(target_id, status, detail)
-    store.finish_run(run_id, "ok" if status == "ok" else "failed", detail)
+    if status == "delete_guard":
+        # 重试时源没变，保护照样拦下：记成 delete_guard（需要处理），不是失败。
+        logs.add_step(store, run_id, "target", detail, level="warn", target_id=target_id)
+        store.finish_run(run_id, "delete_guard", _held_summary(held) or detail)
+    else:
+        store.finish_run(run_id, "ok" if status == "ok" else "failed", detail)
     return status
 
 

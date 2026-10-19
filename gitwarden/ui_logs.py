@@ -23,6 +23,7 @@ _RUN_STATUS_KEYS = {
     "conflict": "logs.status.conflict",
     "history_conflict": "logs.status.history_conflict",
     "audit_alert": "logs.status.audit_alert",
+    "delete_guard": "logs.status.delete_guard",
     "error": "logs.status.error",
 }
 

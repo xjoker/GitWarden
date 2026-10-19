@@ -352,6 +352,12 @@ def test_target_catches_up_after_skipped_fast_forward(env, monkeypatch, change, 
 
     result = env.push()
 
+    if confirm_history and change == "delete":
+        # 删掉唯一的分支等于清空主镜像：默认被大批删除保护拦下，关闭保护后走原有补齐路径。
+        assert result.delete_guard == ["refs/heads/main"]
+        assert refs(env.main)["refs/heads/main"] == first
+        result = push_target(env.ar, env.t, guard=tgt.DeleteGuard(enabled=False))
+
     if confirm_history:
         assert result.main_ok and not result.gate_blocked
         assert refs(env.main, "refs/heads") == refs(env.ar, "refs/heads")

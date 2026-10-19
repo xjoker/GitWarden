@@ -21,6 +21,16 @@ Each backup task has one source, a durable local archive, and one or more target
 
 When a collected branch is force-pushed or deleted, or a collected tag is rewritten, GitWarden preserves the old Git object in the local archive before changing its mirror references. It then publishes that preserved object to the history repository before the main mirror update is allowed. A normal fast-forward needs no extra preservation tag. The process is automatic; there is no approval queue for ordinary Git changes.
 
+A source that still answers but has suddenly become empty, or has lost most of its refs, is treated as suspicious rather than as an instruction to empty the backup. When one run would delete every ref from a main mirror, every branch (however many tags remain), or at least half of its refs and at least three refs (configurable through `GW_DELETE_GUARD_RATIO` and `GW_DELETE_GUARD_MIN_REFS`), GitWarden still preserves the deleted refs in the local archive and the history repository, but leaves the main mirror completely unchanged for that run and marks the target **Needs attention** (`delete_guard`). A source that cannot be fetched at all (404, 401, path missing) never deletes anything; while it keeps failing, its targets are shown as **source failing** instead of healthy.
+
+What to know about the mass-deletion guard (details in [Configuration → Mass-deletion guard](docs/wiki/Configuration.md#mass-deletion-guard)):
+
+- **Release:** the guard counts ref names only and keeps no state. As soon as refs with the same names are back in the source, whatever they point to, the next run passes and the main mirror is rewritten to them. If only some come back and the remaining deletions fall below the thresholds, those deletions are applied in that run. The old commits stay in the history repository. If the deletion was intended, temporarily raise `GW_DELETE_GUARD_RATIO` or set `GW_DELETE_GUARD=off` (only `off` helps when every ref or every branch is deleted), restart, let one run complete, then restore the setting and restart. **Retry** alone is held again.
+- **Cost:** the setting is global, so while it is relaxed or off no task has mass-deletion protection.
+- **False positives:** legitimately renaming three or more branches at once, renaming every branch, or a large one-shot cleanup is held.
+- **Not caught:** gradual deletion, creating a placeholder branch before deleting, diluting the ratio with junk tags, two-ref repositories, and force-pushes to unrelated history. The history repository still preserves every deleted or rewritten ref in these cases.
+- `GW_DELETE_GUARD=off` (or `0`) also disables the "every ref deleted" protection.
+
 GitWarden protects states it has actually collected. A change that appears and disappears between polling runs cannot be recovered. Git objects are in scope; LFS payloads and submodule repositories are not copied. The UI detects these references and marks the task as an incomplete backup so that the limitation is visible.
 
 ### When the safety gate holds a target

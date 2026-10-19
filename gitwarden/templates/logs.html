@@ -25,7 +25,7 @@
     <label>{{ t('logs.result') }}
       <select name="status">
         <option value="">{{ t('logs.any_result') }}</option>
-        {% for key in ('ok', 'partial', 'failed', 'busy') %}<option value="{{ key }}"{% if filters.status == key %} selected{% endif %}>{{ t('logs.status.' + key) }}</option>{% endfor %}
+        {% for key in ('ok', 'partial', 'delete_guard', 'failed', 'busy') %}<option value="{{ key }}"{% if filters.status == key %} selected{% endif %}>{{ t('logs.status.' + key) }}</option>{% endfor %}
       </select>
     </label>
     <label>{{ t('logs.period') }}
