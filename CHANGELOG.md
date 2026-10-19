@@ -1,5 +1,12 @@
 # Changelog
 
+## 20261019.1 — 2026-10-19
+
+- Run the default Compose service with a read-only root filesystem, a tmpfs `/tmp`, all Linux capabilities dropped, and `no-new-privileges`; only the `/data` volume is writable.
+- Upgrade the runtime image's system packages at build time and remove the base image's standalone `pip`, which the runtime does not use.
+- Document mounting a local source repository into the container, including ownership, read-only mounts, and repositories that are still pushed to on the host.
+- Fix release details in the README, document the safety-gate hold, and add a demo GIF, issue templates, and a private vulnerability reporting entry point.
+
 ## 20261016.1 — 2026-10-16
 
 First public release.
