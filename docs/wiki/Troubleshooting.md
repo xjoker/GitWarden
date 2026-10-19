@@ -35,13 +35,13 @@ The history repository also carries `gw/binding`. If its binding tag does not ma
 
 ## Target run is blocked or conflicted
 
-When several conditions apply in one run, the target shows the first of `history_conflict`, `gate_blocked`, `delete_guard`, `conflict`, `audit_alert`; in every one of these cases the main mirror is not changed in that run.
+When several conditions apply in one run, the target shows the first of `history_conflict`, `gate_blocked`, `delete_guard`, `conflict`, `audit_alert`. For `history_conflict`, `gate_blocked` and `delete_guard` the main mirror is not changed in that run. `conflict` can also be reported after a partial main-mirror push, and `audit_alert` is raised by the audit that runs after the main mirror was updated.
 
 | Status | Meaning | Safe next action |
 | --- | --- | --- |
 | `history_conflict` | A `gw/<ULID>` tag exists remotely with a different object. | Stop other writers, preserve evidence, audit the target, and recover from the local volume or an external backup if needed. GitWarden will not overwrite the tag. |
 | `gate_blocked` | The main mirror's old remote value is not a fast-forward ancestor and has not been confirmed in history. | Make the history repository reachable and retry. If another writer changed the main mirror, resolve ownership before retrying. |
-| `delete_guard` | The run would delete every ref, or more than the configured share of refs, from the main mirror. The deleted refs were preserved; the main mirror was left unchanged. | Check whether the source was emptied, recreated, or pointed at the wrong repository. If the deletion was intended, see the mass-deletion guard in [Configuration](Configuration.md). |
+| `delete_guard` | The run would delete every ref, every branch, or at least the configured share (and at least the configured number) of refs from the main mirror. The deleted refs were preserved; the main mirror was left unchanged. | Check whether the source was emptied, recreated, or pointed at the wrong repository. **Retry** is held again while the source is unchanged. If the source recovers, the next run syncs by itself. If the deletion was intended, follow [Releasing a held target](Configuration.md#releasing-a-held-target); while the guard is relaxed or off, no task is protected. |
 | `conflict` | The main mirror changed from the value GitWarden last recorded. | Remove the unexpected writer, inspect the remote refs, and retry only after the remote state is understood. |
 | `audit_alert` | A previously confirmed history tag is missing or has a different object. | Treat the target as incomplete, stop writes, and restore from the local archive or an independent volume backup. |
 | `error` or `failed` | Git, authentication, or a platform operation returned an error. | Read the target step in the run log, correct the reported cause, then use **Retry**. |

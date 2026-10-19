@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from gitwarden.config import Config
 from gitwarden.db import Store
+from gitwarden.i18n import LANG_COOKIE, msg
 from gitwarden.web import create_app
 
 PASSWORD = "pw-source-failing-test"
@@ -80,3 +81,56 @@ def test_delete_guard_shows_needs_attention_not_failing(client, config):
     assert "Added by hand Needs attention NAS · needs attention" in text
     logs = _text(client.get("/logs").text)
     assert "Mass deletion held" in logs
+
+
+def _seed_held(config):
+    store = Store(config.data_dir)
+    task_id = store.add_task("emptied", "http://127.0.0.1:1/emptied.git")
+    target_id = store.add_target(
+        task_id, "NAS", "https://backup.example/main.git", "https://backup.example/history.git"
+    )
+    store.set_bound(target_id, True)
+    detail = msg("run.delete_guard", count=3, items="refs/heads/a, refs/heads/b, refs/tags/v1")
+    store.set_target_status(target_id, "delete_guard", detail)
+    run_id = store.start_run(task_id)
+    summary = msg(
+        "run.delete_guard_summary", count=3, items="refs/heads/a, refs/heads/b, refs/tags/v1"
+    )
+    store.finish_run(run_id, "delete_guard", summary)
+    store.finish_task(task_id, "delete_guard")
+    return task_id
+
+
+def test_overview_explains_delete_guard_instead_of_failure(client, config):
+    _seed_held(config)
+    text = _text(client.get("/").text)
+    assert "The latest run failed" not in text
+    assert "Mass deletion held: the source lost all of its refs" in text
+
+
+def test_task_detail_gives_release_steps_for_delete_guard(client, config):
+    task_id = _seed_held(config)
+    text = _text(client.get(f"/tasks/{task_id}").text)
+    assert "Check the target repositories and retry" not in text
+    assert "Check the source repository first" in text
+    assert "GW_DELETE_GUARD=off" in text and "GW_DELETE_GUARD_RATIO" in text
+    assert "no task has mass-deletion protection" in text
+
+
+def test_task_detail_zh_gives_release_steps_for_delete_guard(client, config):
+    task_id = _seed_held(config)
+    client.cookies.set(LANG_COOKIE, "zh_CN")
+    text = _text(client.get(f"/tasks/{task_id}").text)
+    assert "先检查来源仓库" in text
+    assert "所有任务都没有大批删除保护" in text
+
+
+def test_logs_show_delete_guard_summary_and_filter(client, config):
+    _seed_held(config)
+    page = client.get("/logs").text
+    text = _text(page)
+    assert "No message" not in text.split("emptied", 1)[1][:300]
+    assert "would delete 3 refs from the main mirror (refs/heads/a" in text
+    assert '<option value="delete_guard"' in page
+    filtered = _text(client.get("/logs?status=delete_guard").text)
+    assert "emptied" in filtered

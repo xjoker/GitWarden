@@ -11,7 +11,7 @@ For each task, GitWarden:
 3. creates a local preservation tag for every old object that would be overwritten or deleted;
 4. commits the current mirror refs in the local archive;
 5. pushes new preservation tags to the history repository and confirms them with `ls-remote`;
-6. holds the whole main-mirror update when the run would delete every ref, or more than the configured share of refs (see the mass-deletion guard in [Configuration](Configuration.md));
+6. holds the whole main-mirror update when the run would delete every ref, every branch, or at least the configured share of refs (see [Mass-deletion guard](Configuration.md#mass-deletion-guard));
 7. checks the main mirror's remote values and updates it only when the old value is a fast-forward ancestor or has a confirmed matching preservation object;
 8. audits the history repository against the local confirmation records.
 

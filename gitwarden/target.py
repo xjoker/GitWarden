@@ -38,17 +38,24 @@ class DeleteGuard:
     """大批删除保护：源仓库被清空或大部分 ref 消失时，整轮不更新主镜像仓。
 
     一轮要删除的 ref 数为 n、主镜像现有 ref 总数为 total 时：
-    n == total（会删光）一律拦截；否则 n >= min_refs 且 n / total >= ratio 时拦截。
+    - n == total（会删光）一律拦截；
+    - 主镜像现有的分支（refs/heads/*）全部要被删除时一律拦截，不看剩下多少 tag；
+    - 否则 n >= min_refs 且 n / total >= ratio 时拦截。
+    enabled=False 时以上规则全部关闭。
     """
 
     enabled: bool = True
     ratio: float = 0.5
     min_refs: int = 3
 
-    def trips(self, deletes: int, total: int) -> bool:
+    def trips(
+        self, deletes: int, total: int, *, branch_deletes: int = 0, branches: int = 0
+    ) -> bool:
         if not self.enabled or deletes <= 0 or total <= 0:
             return False
         if deletes >= total:
+            return True
+        if branches > 0 and branch_deletes >= branches:
             return True
         return deletes >= self.min_refs and deletes / total >= self.ratio
 
@@ -278,7 +285,12 @@ def _reconcile_main(
         # 在任何推送之前判定，拦截时本轮的删除和更新都不执行，不会留下半截状态。
         # 外部直接推到主镜像、本地没有记录的 ref 属于 main_conflicts，不计入。
         doomed = sorted(r for r in remote if r not in want and remote[r] == records.get(r))
-        if guard.trips(len(doomed), len(remote)):
+        # 分支全部被删也拦：tag 再多也不能稀释掉“源上一个分支都不剩”这个信号。
+        branches = [r for r in remote if r.startswith("refs/heads/")]
+        branch_deletes = sum(1 for r in doomed if r.startswith("refs/heads/"))
+        if guard.trips(
+            len(doomed), len(remote), branch_deletes=branch_deletes, branches=len(branches)
+        ):
             result.delete_guard = doomed
 
     with telemetry_step("mirror"):

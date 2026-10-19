@@ -53,6 +53,8 @@
           {{ t('overview.attention.overdue_reason', minutes=row.overdue_minutes) }}
         {% elif row.external_note %}
           {{ t('overview.attention.incomplete_reason', note=row.external_note|msg) }}
+        {% elif row.last_status == 'delete_guard' %}
+          {{ t('overview.attention.delete_guard_reason') }}
         {% elif row.last_status and row.last_status != 'ok' %}
           {{ t('overview.attention.failed_reason') }}
         {% elif row.managed_state != 'active' %}

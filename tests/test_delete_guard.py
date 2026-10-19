@@ -9,7 +9,8 @@ from gitwarden import target as tgt
 from gitwarden.archive import capture, init_archive
 from gitwarden.db import Store
 from gitwarden.git import run
-from gitwarden.runner import _push_one, bind_target, run_task
+from gitwarden.i18n import render
+from gitwarden.runner import _held_summary, _push_one, bind_target, retry_target, run_task
 from gitwarden.target import Target, bind, push_target
 from tests.conftest import ID, commit, make_source
 
@@ -188,7 +189,112 @@ def test_gate_block_outranks_delete_guard(env: Env, monkeypatch) -> None:
     res = push_target(env.ar, env.t)
 
     assert res.gate_blocked  # 历史未确认：现有门禁照样生效
+    assert sorted(res.delete_guard) == sorted(before)  # 两者同时成立
     assert mirror_refs(env.main) == before
+
+
+# ---- 所有分支被删：不看剩下多少 tag ----
+
+
+def _drop_all_branches(src: Path) -> None:
+    run(src, "checkout", "-q", "--detach")
+    for name in run(src, "for-each-ref", "--format=%(refname:short)", "refs/heads").stdout.split():
+        run(src, "branch", "-D", name)
+
+
+def _add_tags(src: Path, count: int) -> None:
+    for i in range(count):
+        run(src, *ID, "tag", "-a", "-m", f"x{i}", f"x{i}")
+
+
+@pytest.mark.parametrize(
+    ("deletes", "total", "branch_deletes", "branches", "expected"),
+    [
+        (2, 7, 2, 2, True),  # 分支全没了，只剩 tag：新规则拦截
+        (2, 7, 0, 0, False),  # 没有分支信息时退回原规则：2 < min_refs
+        (1, 7, 1, 2, False),  # 还剩一个分支：不拦
+        (4, 14, 4, 4, True),  # tag 稀释：4/14 < 0.5，但分支全删
+        (7, 7, 2, 2, True),  # 删光
+    ],
+)
+def test_all_branches_rule_unit(deletes, total, branch_deletes, branches, expected) -> None:
+    guard = tgt.DeleteGuard()
+    got = guard.trips(deletes, total, branch_deletes=branch_deletes, branches=branches)
+    assert got is expected
+    disabled = tgt.DeleteGuard(enabled=False)
+    assert not disabled.trips(deletes, total, branch_deletes=branch_deletes, branches=branches)
+
+
+def test_all_branches_deleted_with_tags_left_is_held(tmp_path: Path) -> None:
+    """main + b1 + 5 个 tag，源上分支全没了、tag 都还在：2/7 不到门槛，但仍必须拦。"""
+    env = Env(tmp_path, branches=2)
+    _add_tags(env.src, 4)
+    env.cap()
+    assert push_target(env.ar, env.t).main_ok
+    before = mirror_refs(env.main)
+    assert len(before) == 7
+    _drop_all_branches(env.src)
+    env.cap()
+    assert not tgt.DeleteGuard().trips(2, 7)  # 只看数量和比例时放行
+
+    res = push_target(env.ar, env.t)
+
+    assert res.delete_guard == ["refs/heads/b1", "refs/heads/main"]
+    assert not res.main_ok
+    assert mirror_refs(env.main) == before
+    # 被删的分支照常保全到历史仓。
+    preserved = refs(env.ar, "refs/preserved")
+    assert len(preserved) == 2
+    hist = refs(env.hist)
+    for name, oid in preserved.items():
+        assert hist["refs/tags/gw/" + name.removeprefix("refs/preserved/")] == oid
+
+
+def test_tag_dilution_then_delete_all_branches_is_held(tmp_path: Path) -> None:
+    """Elliot S5：先加 10 个垃圾 tag，下一轮删光 4 个真分支。旧规则 4/15 放行，现在拦。"""
+    env = Env(tmp_path, branches=4)
+    _add_tags(env.src, 10)
+    env.cap()
+    assert push_target(env.ar, env.t).main_ok
+    before = mirror_refs(env.main)
+    _drop_all_branches(env.src)
+    env.cap()
+
+    res = push_target(env.ar, env.t)
+
+    assert len(res.delete_guard) == 4
+    assert all(r.startswith("refs/heads/") for r in res.delete_guard)
+    assert mirror_refs(env.main) == before
+
+
+def test_some_branches_left_with_tags_is_not_held(tmp_path: Path) -> None:
+    env = Env(tmp_path, branches=2)
+    _add_tags(env.src, 4)
+    env.cap()
+    assert push_target(env.ar, env.t).main_ok
+    run(env.src, "branch", "-D", "b1")
+    env.cap()
+
+    res = push_target(env.ar, env.t)
+
+    assert res.main_ok and not res.delete_guard
+    assert "refs/heads/b1" not in mirror_refs(env.main)
+
+
+def test_all_branches_rule_is_off_when_guard_disabled(tmp_path: Path) -> None:
+    env = Env(tmp_path, branches=2)
+    _add_tags(env.src, 4)
+    env.cap()
+    assert push_target(env.ar, env.t).main_ok
+    _drop_all_branches(env.src)
+    env.cap()
+
+    res = push_target(env.ar, env.t, guard=tgt.DeleteGuard(enabled=False))
+
+    # 关闭后连同“删光/分支全删”一起放行；bare 目标默认拒绝删除 HEAD 分支，
+    # 所以 main 留下并报冲突，b1 被删——与开启保护前的旧行为一致。
+    assert not res.delete_guard
+    assert "refs/heads/b1" not in mirror_refs(env.main)
 
 
 # ---- runner 层：状态、优先级 ----
@@ -259,3 +365,52 @@ def test_history_conflict_outranks_delete_guard(renv: RunEnv) -> None:
     status, _ = _push_one(renv.store, renv.data, archive, renv.store.get_target(renv.tid))
 
     assert status == "history_conflict"
+
+
+def test_gate_block_outranks_delete_guard_at_runner_level(renv: RunEnv, monkeypatch) -> None:
+    renv.empty_source()
+    archive = renv.data / "archives" / f"{renv.store.get_task(renv.task_id)['archive_uuid']}.git"
+    capture(archive, str(renv.src), "t")
+    monkeypatch.setattr(tgt, "_push_history", lambda *a, **k: None)
+    held: list[list[str]] = []
+
+    status, _ = _push_one(renv.store, renv.data, archive, renv.store.get_target(renv.tid), held)
+
+    assert status == "gate_blocked"
+    assert held == []  # 没有进入 delete_guard 分支
+
+
+def test_held_run_has_summary_message_and_is_not_initial_backup(renv: RunEnv) -> None:
+    renv.empty_source()
+
+    run_task(renv.store, renv.data, renv.task_id)
+    run_task(renv.store, renv.data, renv.task_id)  # 第二轮：档案已无镜像 ref
+
+    for row in renv.store.list_runs(renv.task_id)[:2]:
+        assert row["status"] == "delete_guard"
+        assert not row["initial_backup"]
+        message = render(row["message"], "en")
+        assert message.startswith("Mass deletion held: this round would delete 3 refs")
+        assert "refs/heads/dev" in message and "refs/heads/main" in message
+
+
+def test_retry_on_held_target_is_recorded_as_delete_guard(renv: RunEnv) -> None:
+    renv.empty_source()
+    run_task(renv.store, renv.data, renv.task_id)
+
+    status = retry_target(renv.store, renv.data, renv.tid)
+
+    assert status == "delete_guard"
+    row = renv.store.list_runs(renv.task_id)[0]
+    assert row["status"] == "delete_guard"
+    assert "3 refs" in render(row["message"], "en")
+    assert renv.store.get_target(renv.tid)["last_status"] == "delete_guard"
+
+
+def test_summary_lists_first_refs_and_target_count() -> None:
+    many = [f"refs/heads/b{i}" for i in range(8)]
+    one = render(_held_summary([many]), "en")
+    assert "8 refs" in one and "refs/heads/b4 …" in one and "refs/heads/b5" not in one
+    two = render(_held_summary([many, many[:2]]), "en")
+    assert two.startswith("Mass deletion held on 2 targets")
+    assert _held_summary([]) is None
