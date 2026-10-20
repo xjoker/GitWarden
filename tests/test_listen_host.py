@@ -5,7 +5,12 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
+import urllib.request
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
@@ -301,6 +306,54 @@ def test_healthcheck_url_rewrites_all_interfaces(tmp_path: Path) -> None:
         healthcheck_url(_env(tmp_path, GW_HOST="fe80::1%eth0", GW_PORT="9095"))
         == "http://[fe80::1%25eth0]:9095/health"
     )
+
+
+@contextmanager
+def _health_server(status: int):
+    requests: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            self.send_response(status)
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server.server_port, requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("status", [200, 503])
+def test_health_probe_bypasses_proxy_and_reports_local_status(tmp_path, monkeypatch, status):
+    from gitwarden.config import probe_health
+
+    with _health_server(status) as (port, requests), _health_server(502) as (proxy_port, proxied):
+        for key in ("http_proxy", "HTTP_PROXY"):
+            monkeypatch.setenv(key, f"http://127.0.0.1:{proxy_port}")
+        for key in ("no_proxy", "NO_PROXY"):
+            monkeypatch.setenv(key, "")
+        monkeypatch.setattr(urllib.request, "_opener", None)
+        env = _env(tmp_path, GW_HOST="127.0.0.1", GW_PORT=str(port))
+
+        if status == 200:
+            probe_health(env, timeout=2)
+        else:
+            with pytest.raises(HTTPError) as caught:
+                probe_health(env, timeout=2)
+            assert caught.value.code == status
+
+        assert requests == ["/health"]
+        assert proxied == []
 
 
 def test_entrypoint_warns_when_listening_on_all_interfaces(

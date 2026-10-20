@@ -108,7 +108,10 @@ def probe_health(env: Mapping[str, str] | None = None, timeout: float = 3) -> No
     """供镜像 HEALTHCHECK 调用：连不上或非 2xx 时抛异常。"""
     import urllib.request
 
-    urllib.request.urlopen(healthcheck_url(env), timeout=timeout).read()
+    # 健康检查直接访问本机监听地址，不应经过部署环境的 HTTP 代理。
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(healthcheck_url(env), timeout=timeout) as response:
+        response.read()
 
 
 def _host(env: Mapping[str, str], server: Mapping, config_path: Path) -> str:
