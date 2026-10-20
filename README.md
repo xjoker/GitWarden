@@ -6,9 +6,9 @@ GitWarden is a self-hosted Git history mirror. It periodically fetches a source 
 
 English · [简体中文](README.zh-CN.md)
 
-![Terminal demo: a force push while the history repository is offline holds the main mirror, and the old commit stays preserved](docs/demo.gif)
+![GitWarden walkthrough: add a repository, preserve the old version before a force push updates the main mirror, and download a preservation event as a Git bundle](docs/demo.gif)
 
-*Demo (about 50 seconds, local bare repositories): GitWarden mirrors a source; the history repository then rejects pushes and the source force-pushes `main` and fast-forwards `dev`. The safety gate holds the whole main mirror (both branches), the old `main` commit stays in the local archive as `refs/preserved/<ULID>`, and once the history repository accepts pushes again the preservation tag is confirmed first and the mirror catches up. `gwctl` in the recording is a small demo helper script that submits the same WebUI forms as the backup wizard and the **Run now** button; GitWarden does not ship a CLI.*
+*Walkthrough (about 1 minute, WebUI with English subtitles, no sound): add a repository in the backup wizard. When upstream force-pushes, deletes a branch or rewrites a tag, GitWarden preserves the old version and confirms it in the history repository before it updates the main mirror. If the source is deleted or made private, what was already saved is untouched and the task shows **Failing** while it keeps retrying; if the history repository can't confirm the old version, the main mirror holds off updating and the run log explains why. Audits flag missing or modified records, and each preservation event downloads as a Git bundle that you can restore with plain Git.*
 
 ![GitWarden overview](docs/images/overview.jpg)
 
