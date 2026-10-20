@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 20261020.1 — 2026-10-20
+
 Healthcheck follows the real listen address, warn when listening on all interfaces, tighten host validation, and small follow-ups from #10 / #13 / #14 reviews.
 
 - Bypass HTTP proxies for Docker healthchecks so proxy settings cannot replace the local service's health result.
