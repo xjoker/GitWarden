@@ -134,14 +134,14 @@ git checkout -b restore {{ command['tag'] }}^{}
       <summary>{{ t('task.edit') }}</summary>
       <form method="post" action="/tasks/{{ task['id'] }}/edit" class="form">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        {% set values = task_values %}{% include "_task_fields.html" %}
+        {% set values = task_values %}{% set platform_managed = task['access_id'] is not none %}{% include "_task_fields.html" %}
         <div class="actions"><button type="submit">{{ t('common.action.save') }}</button></div>
       </form>
     </details>
   </section>
 
   <section id="add-target" class="card padded">
-    <details>
+    <details{% if add_target_open %} open{% endif %}>
       <summary>{{ t('task.add_target') }}</summary>
       <form method="post" action="/tasks/{{ task['id'] }}/targets" class="form">
         <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -155,7 +155,7 @@ git checkout -b restore {{ command['tag'] }}^{}
       <h3>{{ t('wizard.mode_platform') }}</h3>
       <form method="post" action="/tasks/{{ task['id'] }}/targets/provision" class="form" style="margin-top:20px">
         <input type="hidden" name="csrf" value="{{ csrf }}">
-        <label class="field">{{ t('field.access') }}<select name="access_id" required><option value="">{{ t('wizard.select_platform') }}</option>{% for p in platforms %}<option value="{{ p['id'] }}"{% if provision_values['access_id']|string == p['id']|string %} selected{% endif %}>{{ p['name'] }} · {{ p['kind'] }}</option>{% endfor %}</select></label>
+        <label class="field">{{ t('field.access') }}<select name="access_id" required><option value="">{{ t('wizard.select_platform') }}</option>{% for p in platforms %}<option value="{{ p['id'] }}"{% if provision_values['access_id']|string == p['id']|string %} selected{% endif %}>{{ p['label'] }}</option>{% endfor %}</select></label>
         <label class="field">{{ t('field.owner') }}<input name="owner" required value="{{ provision_values['owner'] }}"></label>
         <label class="field">{{ t('field.target') }}<input name="name" required value="{{ provision_values['name'] }}"></label>
         <div class="actions"><button type="submit">{{ t('task.provision_bind') }}</button></div>

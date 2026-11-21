@@ -1,3 +1,7 @@
+{% set managed_readonly = platform_managed|default(false) %}
+{% if managed_readonly %}
+<div class="notice info">{{ t('task.managed_source_readonly') }}</div>
+{% endif %}
 <label class="field" for="task-name">
   {{ t('field.name') }}
   <input id="task-name" name="name" required value="{{ values['name'] }}">
@@ -6,13 +10,13 @@
 <label class="field" for="task-url">
   {{ t('field.source') }}
   <input id="task-url" name="source_url" required value="{{ values['source_url'] }}" class="mono"
-         placeholder="https://example.com/org/repo.git">
+         placeholder="https://example.com/org/repo.git"{% if managed_readonly %} disabled{% endif %}>
   <span class="hint">{{ t('wizard.source_hint') }}</span>
 </label>
 <div class="grid">
   <label class="field" for="task-cred">
     {{ t('wizard.source_credential') }}
-    <select id="task-cred" name="source_cred_id">
+    <select id="task-cred" name="source_cred_id"{% if managed_readonly %} disabled{% endif %}>
       <option value="">{{ t('wizard.credential_none') }}</option>
       {% for c in creds %}
       <option value="{{ c.id }}"{% if values['source_cred_id']|string == c.id|string %} selected{% endif %}>{{ c.name }} · {{ c.kind|cred_kind }}</option>

@@ -142,7 +142,7 @@
       <div class="row" style="justify-content:space-between;gap:12px">
         <span class="mono muted">{{ run.started_at|ago }}</span>
         <span style="flex:1;min-width:0">{{ run.task_name }}</span>
-        <span class="{{ 'ok' if run.status == 'ok' else 'warn' }}">{{ t(run.status_key) }}</span>
+        <span class="pill {{ run.status or 'running' }}">{{ t(run.status_key) }}</span>
       </div>
       {% else %}
       <div class="empty">{{ t('overview.runs.empty') }}</div>

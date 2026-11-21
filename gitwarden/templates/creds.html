@@ -2,7 +2,7 @@
 {% block title %}{{ t('creds.title') }}{% endblock %}
 {% block content %}
 <style>
-.cred-table{overflow:hidden}.cred-secret{color:var(--muted)}.cred-form{max-width:860px}.kind-switch{display:flex;flex-wrap:wrap;gap:4px;padding:4px;background:#EEF1EE;border-radius:10px;align-self:flex-start}.kind-switch button{min-height:40px;padding:0 16px;border:0;background:transparent;color:var(--muted);font-size:14px}.kind-switch button.active{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(23,32,28,.12)}.ref-list{display:flex;flex-wrap:wrap;gap:4px 12px;color:var(--muted);font-size:13px}.ref-list span{white-space:nowrap}.cred-delete{min-height:36px}.cred-delete[disabled]{cursor:not-allowed}.cred-add{display:flex;flex-direction:column;gap:18px}
+.cred-table{overflow:hidden}.cred-secret{color:var(--muted)}.cred-form{max-width:860px}.kind-switch{display:flex;flex-wrap:wrap;gap:4px;padding:4px;background:#EEF1EE;border-radius:10px;align-self:flex-start}.kind-switch label{display:flex;align-items:center;min-height:40px;padding:0 16px;border-radius:8px;color:var(--muted);font-size:14px;cursor:pointer}.kind-switch label:has(input:checked){background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(23,32,28,.12)}.kind-switch input{position:absolute;opacity:0;pointer-events:none}.cred-create-form:has(input[name=kind][value=https]:checked) .cred-ssh-fields,.cred-create-form:has(input[name=kind][value=ssh]:checked) .cred-https-fields{display:none}.cred-fields{display:grid;gap:12px}.ref-list{display:flex;flex-wrap:wrap;gap:4px 12px;color:var(--muted);font-size:13px}.ref-list span{white-space:nowrap}.cred-delete{min-height:36px}.cred-delete[disabled]{cursor:not-allowed}.cred-add{display:flex;flex-direction:column;gap:18px}
 </style>
 
 <header>
@@ -38,7 +38,7 @@
           <div class="actions">
           <a class="btn secondary small" href="/creds?edit={{ credential.id }}#credential-form" aria-label="{{ t('creds.edit_named', name=credential.name) }}">{{ t('creds.edit') }}</a>
           {% if references %}<button type="button" class="secondary cred-delete" disabled title="{{ t('creds.delete_in_use_title') }}">{{ t('creds.delete') }}</button>
-          {% else %}<form method="post" action="/creds/{{ credential.id }}/delete" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="danger cred-delete">{{ t('creds.delete') }}</button></form>{% endif %}
+          {% else %}<details class="confirm-delete"><summary class="btn danger small cred-delete">{{ t('creds.delete') }}</summary><div class="detail-body"><form method="post" action="/creds/{{ credential.id }}/delete" class="form"><input type="hidden" name="csrf" value="{{ csrf }}"><p class="hint">{{ t('creds.delete_hint') }}</p><button type="submit" class="danger small">{{ t('creds.delete_confirm') }}</button></form></div></details>{% endif %}
           </div>
         </td>
       </tr>
@@ -54,18 +54,10 @@
     {% if edit_id %}
     <p class="hint">{{ t('creds.edit_hint') }}</p>
     <p>{{ t('creds.type') }}: <strong>{{ t('creds.kind.' ~ values.kind) }}</strong></p>
-    {% else %}
-    <form method="get" action="/creds" class="kind-switch" aria-label="{{ t('creds.kind_switch') }}">
-      <input type="hidden" name="name" value="{{ values.name }}">
-      <input type="hidden" name="username" value="{{ values.username }}">
-      <button type="submit" name="kind" value="https" class="{% if values.kind == 'https' %}active{% endif %}" aria-pressed="{{ 'true' if values.kind == 'https' else 'false' }}">{{ t('creds.kind.https_form') }}</button>
-      <button type="submit" name="kind" value="ssh" class="{% if values.kind == 'ssh' %}active{% endif %}" aria-pressed="{{ 'true' if values.kind == 'ssh' else 'false' }}">{{ t('creds.kind.ssh_form') }}</button>
-    </form>
-    {% endif %}
-    <form method="post" action="{{ '/creds/' ~ edit_id ~ '/edit' if edit_id else '/creds' }}" class="form">
+    <form method="post" action="/creds/{{ edit_id }}/edit" class="form">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="kind" value="{{ values.kind }}">
-      <label class="field">{{ t('creds.name') }}<input name="name" required value="{{ values.name }}" placeholder="{{ t('creds.name_placeholder') }}"></label>
+      <label class="field">{{ t('creds.name') }}<input name="name" value="{{ values.name }}" required placeholder="{{ t('creds.name_placeholder') }}"></label>
       <label class="field">{{ t('creds.username') }}<input name="username" value="{{ values.username }}" autocomplete="off"><span class="hint">{{ t('creds.username_hint') }}</span></label>
       {% if values.kind == 'ssh' %}
       <label class="field">{{ t('creds.private_key') }}<textarea name="private_key" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea><span class="hint">{{ t('creds.private_key_hint') }}</span></label>
@@ -73,8 +65,27 @@
       {% else %}
       <label class="field">{{ t('creds.secret_input') }}<input name="secret" type="password" autocomplete="new-password"><span class="hint">{{ t('creds.secret_hint') }}</span></label>
       {% endif %}
-      <div class="actions"><button type="submit">{{ t('creds.save') }}</button>{% if edit_id %}<a class="btn secondary" href="/creds">{{ t('common.action.cancel') }}</a>{% endif %}</div>
+      <div class="actions"><button type="submit">{{ t('creds.save') }}</button><a class="btn secondary" href="/creds">{{ t('common.action.cancel') }}</a></div>
     </form>
+    {% else %}
+    <form method="post" action="/creds" class="form cred-create-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <div class="kind-switch" role="radiogroup" aria-label="{{ t('creds.kind_switch') }}">
+        <label><input type="radio" name="kind" value="https"{% if values.kind != 'ssh' %} checked{% endif %}>{{ t('creds.kind.https_form') }}</label>
+        <label><input type="radio" name="kind" value="ssh"{% if values.kind == 'ssh' %} checked{% endif %}>{{ t('creds.kind.ssh_form') }}</label>
+      </div>
+      <label class="field">{{ t('creds.name') }}<input name="name" value="{{ values.name }}" required placeholder="{{ t('creds.name_placeholder') }}"></label>
+      <label class="field">{{ t('creds.username') }}<input name="username" value="{{ values.username }}" autocomplete="off"><span class="hint">{{ t('creds.username_hint') }}</span></label>
+      <div class="cred-fields cred-ssh-fields">
+        <label class="field">{{ t('creds.private_key') }}<textarea name="private_key" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea><span class="hint">{{ t('creds.private_key_hint') }}</span></label>
+        <label class="field">{{ t('creds.known_hosts') }}<textarea name="known_hosts" spellcheck="false" placeholder="git.example.lan ssh-ed25519 AAAA…">{{ values.known_hosts }}</textarea><span class="hint">{{ t('creds.known_hosts_hint') }}</span></label>
+      </div>
+      <div class="cred-fields cred-https-fields">
+        <label class="field">{{ t('creds.secret_input') }}<input name="secret" type="password" autocomplete="new-password"><span class="hint">{{ t('creds.secret_hint') }}</span></label>
+      </div>
+      <div class="actions"><button type="submit">{{ t('creds.save') }}</button></div>
+    </form>
+    {% endif %}
   </div>
 </section>
 {% endblock %}

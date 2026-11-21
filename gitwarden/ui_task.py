@@ -31,7 +31,6 @@ from gitwarden.web import (
     _db_error,
     _form_bool,
     _page,
-    _platform_summaries,
     _positive_int,
     _redact,
     _redirect,
@@ -86,37 +85,34 @@ def _form_values(form: Any, store) -> tuple[dict[str, Any], dict[str, Any], dict
         "cred_id": str(form.get("target_cred_id", form.get("cred_id", ""))),
     }
     provision_values = {
-        "access_id": str(form.get("access_id", form.get("provision_access_id", ""))),
-        "owner": str(form.get("owner", form.get("provision_owner", ""))),
-        "name": str(form.get("target_name", form.get("provision_name", ""))),
+        "access_id": str(
+            form.get("access_id") if "access_id" in form else form.get("provision_access_id", "")
+        ),
+        "owner": str(form.get("owner") if "owner" in form else form.get("provision_owner", "")),
+        "name": str(
+            form.get("provision_name") if "provision_name" in form else form.get("target_name", "")
+        ),
     }
     return task_values, target_values, provision_values
 
 
 def _platform_choices(store) -> list[dict[str, Any]]:
+    instances = {row["id"]: row for row in store.list_instances()}
     choices = []
-    for row in _platform_summaries(store):
+    for access in store.list_accesses():
+        instance = instances.get(access["instance_id"])
+        if not instance:
+            continue
         choices.append(
             {
-                "id": row["id"],
-                "instance_id": row["instance_id"],
-                "instance_name": row.get("name"),
-                "access_name": row.get("name"),
-                "kind": row.get("kind", ""),
-                "label": f"{row.get('name', '')} · {row.get('kind', '')}",
+                "id": access["id"],
+                "instance_id": instance["id"],
+                "instance_name": instance["name"],
+                "access_name": access["name"],
+                "kind": instance["kind"],
+                "label": f"{instance['name']} · {access['name']}",
             }
         )
-    # _platform_summaries merges instance and access rows, so recover the access
-    # label from the authoritative access row when both names happen to match.
-    for choice in choices:
-        access = store.get_access(choice["id"])
-        instance = store.get_instance(choice["instance_id"])
-        if access:
-            choice["access_name"] = access["name"]
-        if instance:
-            choice["instance_name"] = instance["name"]
-            choice["kind"] = instance["kind"]
-            choice["label"] = f"{instance['name']} · {access['name'] if access else ''}"
     return choices
 
 
@@ -253,6 +249,14 @@ def _target_view(data_dir: Path, task: dict[str, Any], target: dict[str, Any]) -
     }
 
 
+def _clone_dir(history_url: str) -> str:
+    """Derive the local directory name created by `git clone <history_url>`."""
+    cleaned = history_url.strip().rstrip("/")
+    if "://" not in cleaned and not cleaned.startswith("/") and ":" in cleaned:
+        cleaned = cleaned.split(":", 1)[1]
+    return cleaned.rsplit("/", 1)[-1].removesuffix(".git") or "repo"
+
+
 def _event_view(event: dict[str, Any], targets: list[dict[str, Any]]) -> dict[str, Any]:
     label = str(event.get("preserved_ref") or "").removeprefix("refs/preserved/")
     commands = []
@@ -263,9 +267,7 @@ def _event_view(event: dict[str, Any], targets: list[dict[str, Any]]) -> dict[st
                 {
                     "history_url": history_url,
                     "history_arg": shlex.quote(history_url),
-                    "clone_dir": shlex.quote(
-                        history_url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
-                    ),
+                    "clone_dir": shlex.quote(_clone_dir(history_url)),
                     "tag": shlex.quote(f"gw/{label}"),
                 }
             )
@@ -296,6 +298,7 @@ def detail_page(
     target_edit: dict | None = None,
     provision_values: dict | None = None,
     edit_open: bool = False,
+    add_target_open: bool = False,
 ):
     store = _store(request)
     task = _require_task(store, task_id)
@@ -353,6 +356,9 @@ def detail_page(
         "effective_interval": max(1, math.ceil(effective)),
         "interval_reason": interval_reason,
     }
+    resolved_task_values = task_values or _task_values_from_row(task)
+    if task_values is None and task.get("access_id") and source_cred_id is not None:
+        resolved_task_values["source_cred_id"] = str(source_cred_id)
     return _page(
         request,
         "task_detail.html",
@@ -364,13 +370,14 @@ def detail_page(
         events=events,
         runs=runs,
         creds=_cred_summaries(store),
-        platforms=_platform_summaries(store),
-        task_values=task_values or _task_values_from_row(task),
+        platforms=_platform_choices(store),
+        task_values=resolved_task_values,
         target_values=target_values
         or {"name": "", "main_url": "", "history_url": "", "cred_id": ""},
         target_edit=target_edit,
         provision_values=provision_values or {"access_id": "", "owner": "", "name": ""},
         edit_open=edit_open,
+        add_target_open=add_target_open,
         min_sync_minutes=store.min_sync_minutes,
     )
 
@@ -409,14 +416,22 @@ def _create_platform(
 ) -> int:
     store = _store(request)
     task_id = store.add_task(**task_data)
-    provision_target(
-        store,
-        request.app.state.data_dir,
-        task_id,
-        target_data["access_id"],
-        target_data["owner"],
-        target_data["name"],
-    )
+    archive = archive_path(request.app.state.data_dir, store.get_task(task_id))
+    try:
+        provision_target(
+            store,
+            request.app.state.data_dir,
+            task_id,
+            target_data["access_id"],
+            target_data["owner"],
+            target_data["name"],
+        )
+    except BaseException:
+        # Roll back the newly created empty task and empty archive dir so retries do not collide.
+        store.delete_task(task_id)
+        if archive.exists() and not git_run(archive, "for-each-ref", check=False).stdout.strip():
+            shutil.rmtree(archive, ignore_errors=True)
+        raise
     request.app.state.scheduler.trigger(task_id)
     return task_id
 
@@ -526,8 +541,6 @@ def register(app: FastAPI) -> None:
                 confirm_values=confirm_values,
             )
         except Exception as exc:
-            # Provisioning may have created a task before a platform API failure;
-            # preserve that task and let the user resume from its detail page.
             detail = t(
                 "wizard.creation_failed",
                 detail=_redact(str(exc), store.secret_values()),

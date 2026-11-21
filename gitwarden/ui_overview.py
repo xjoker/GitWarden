@@ -10,7 +10,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
 from gitwarden.db import Store
-from gitwarden.logs import recent_events, recent_runs
 from gitwarden.scheduler import effective_interval
 from gitwarden.web import CsrfToken, _page, _store
 
@@ -179,7 +178,9 @@ def task_summary(
     if scheduler is not None and hasattr(scheduler, "effective_interval"):
         interval = float(scheduler.effective_interval(task))
     configured = float(task.get("interval_minutes") or 0)
-    overdue = _overdue_seconds(task, interval) if task.get("enabled") else 0.0
+    is_enabled = bool(task.get("enabled"))
+    state = str(task.get("managed_state") or "active")
+    overdue = _overdue_seconds(task, interval) if is_enabled else 0.0
     missing_targets = not targets
     target_attention = any(target["status_key"] != "tasks.target.healthy" for target in targets)
     # 仅在来源/整轮失败（last_status == 'failed'）时标记为 failing；
@@ -187,20 +188,19 @@ def task_summary(
     last_status = task.get("last_status")
     source_failure = last_status == "failed"
     non_ok_status = bool(last_status and last_status != "ok")
-    managed_state_attention = str(task.get("managed_state") or "active") in {
-        "not_visible",
-        "excluded",
-        "source_gone",
-    }
-    attention = bool(
-        overdue
-        or missing_targets
-        or target_attention
-        or task.get("external_note")
-        or source_failure
-        or non_ok_status
-        or managed_state_attention
-    )
+    managed_state_attention = state in {"not_visible", "source_gone"}
+    if not is_enabled or state == "excluded":
+        attention = False
+    else:
+        attention = bool(
+            overdue
+            or missing_targets
+            or target_attention
+            or task.get("external_note")
+            or source_failure
+            or non_ok_status
+            or managed_state_attention
+        )
 
     if latest_run is _UNSET:
         latest_runs = store.list_runs(task["id"], limit=1)
@@ -211,17 +211,14 @@ def task_summary(
     )
 
     managed = _managed_summary(store, task, accesses=accesses, instances=instances)
-    state = str(task.get("managed_state") or "active")
     if state != "active":
         status_key = state if state in _STATUS_LABELS else "needs_attention"
-    elif not task.get("enabled"):
+    elif not is_enabled:
         status_key = "disabled"
     elif source_failure:
         status_key = "failing"
     elif attention:
         status_key = "needs_attention"
-    elif incomplete:
-        status_key = "incomplete"
     else:
         status_key = "healthy"
 
@@ -368,18 +365,6 @@ def _format_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ]
 
 
-def _overview_events(store: Store, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if not tasks:
-        return []
-    return _format_events(recent_events(store, limit=5))
-
-
-def _overview_runs(store: Store, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if not tasks:
-        return []
-    return _format_runs(recent_runs(store, limit=5))
-
-
 def _summaries_from_snapshot(
     store: Store, snapshot: dict[str, Any], scheduler: object | None
 ) -> list[dict[str, Any]]:
@@ -407,11 +392,7 @@ def _overview_context(request: Request, store: Store) -> dict[str, Any]:
     scheduler = request.app.state.scheduler
     snapshot = store.overview_snapshot(include_feed=True, feed_limit=5)
     summaries = _summaries_from_snapshot(store, snapshot, scheduler)
-    attention = [
-        row
-        for row in summaries
-        if row["attention"] or row["status_key"] in {"excluded", "source_gone"}
-    ]
+    attention = [row for row in summaries if row["attention"]]
     return {
         "tasks": summaries[:10],
         "attention": attention[:10],
@@ -420,7 +401,11 @@ def _overview_context(request: Request, store: Store) -> dict[str, Any]:
         "stats": {
             "active": sum(1 for row in summaries if row["enabled"]),
             "disabled": sum(1 for row in summaries if not row["enabled"]),
-            "healthy": sum(1 for row in summaries if row["complete"] and not row["attention"]),
+            "healthy": sum(
+                1
+                for row in summaries
+                if row["enabled"] and row["complete"] and not row["attention"]
+            ),
             "attention": len(attention),
             "incomplete": sum(1 for row in summaries if not row["complete"]),
         },

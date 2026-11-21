@@ -584,5 +584,16 @@
   "run.audit_alert_unknown": "History repo audit: {count} unexpected tag(s) ({items})",
   "error.https_username_in_use": "Username cannot be cleared while this HTTPS credential is used by a platform access.",
   "error.https_secret": "A password or access token is required for a new HTTPS credential.",
-  "error.ssh_known_hosts": "Known hosts are required for an SSH credential."
+  "error.ssh_known_hosts": "Known hosts are required for an SSH credential.",
+  "platforms.remove_instance": "Remove instance",
+  "platforms.confirm_remove_instance": "Confirm remove",
+  "platforms.remove_instance_hint": "Remove this unused platform instance.",
+  "platforms.remove_instance_in_use": "Remove all accesses and tasks referencing this instance before deleting it.",
+  "platforms.remove_access_hint": "Remove this access. Existing tasks become manual tasks and keep their archives.",
+  "platforms.confirm_remove_access": "Confirm remove",
+  "creds.delete_hint": "Remove this unused credential from GitWarden.",
+  "creds.delete_confirm": "Confirm delete",
+  "task.managed_source_readonly": "Source URL and credential are managed by the platform access above and cannot be edited here.",
+  "logs.category.logout": "Sign-out",
+  "logs.category.discovery": "Discovery"
 }

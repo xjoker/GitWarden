@@ -11,7 +11,7 @@
     <h1>{{ t('platforms.title') }}</h1>
     <p>{{ t('platforms.intro') }}</p>
   </div>
-  <details class="card instance-add">
+  <details class="card instance-add"{% if instance_open %} open{% endif %}>
     <summary class="btn secondary small">{{ t('platforms.add_instance') }}</summary>
     <div class="detail-body">
       <form method="post" action="/instances" class="form">
@@ -48,23 +48,40 @@
         </a>
         {% else %}<p class="empty">{{ t('platforms.no_accesses') }}</p>{% endfor %}
       </div>
-      <details class="access-add">
+      <details class="access-add"{% if add_access_instance_id == instance.id %} open{% endif %}>
         <summary class="btn secondary small">{{ t('platforms.add_access') }}</summary>
         <div class="detail-body">
+          {% set add_form = add_access_values if add_access_instance_id == instance.id else None %}
           <form method="post" action="/accesses" class="form">
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <input type="hidden" name="instance_id" value="{{ instance.id }}">
-            <label class="field">{{ t('platforms.access_name') }}<input name="name" required></label>
-            <label class="field">{{ t('platforms.credential') }}<select name="cred_id" required>{% for credential in credentials %}<option value="{{ credential.id }}">{{ credential.name }}{% if credential.username %} · {{ credential.username }}{% endif %}</option>{% else %}<option value="">{{ t('platforms.no_credentials') }}</option>{% endfor %}</select></label>
-            <input type="hidden" name="include_forks" value="0"><label class="chk"><input type="checkbox" name="include_forks" value="1">{{ t('platforms.include_forks') }}</label>
-            <input type="hidden" name="include_archived" value="0"><label class="chk"><input type="checkbox" name="include_archived" value="1" checked>{{ t('platforms.include_archived') }}</label>
-            <input type="hidden" name="include_public" value="0"><label class="chk"><input type="checkbox" name="include_public" value="1" checked>{{ t('platforms.include_public') }}</label>
-            <input type="hidden" name="include_private" value="0"><label class="chk"><input type="checkbox" name="include_private" value="1" checked>{{ t('platforms.include_private') }}</label>
-            <input type="hidden" name="auto_enable" value="0"><label class="chk"><input type="checkbox" name="auto_enable" value="1" checked>{{ t('platforms.auto_enable') }}</label>
+            <label class="field">{{ t('platforms.access_name') }}<input name="name" required value="{{ add_form.name if add_form else '' }}"></label>
+            <label class="field">{{ t('platforms.credential') }}<select name="cred_id" required>{% for credential in credentials %}<option value="{{ credential.id }}"{% if add_form and add_form.cred_id|string == credential.id|string %} selected{% endif %}>{{ credential.name }}{% if credential.username %} · {{ credential.username }}{% endif %}</option>{% else %}<option value="">{{ t('platforms.no_credentials') }}</option>{% endfor %}</select></label>
+            <input type="hidden" name="include_forks" value="0"><label class="chk"><input type="checkbox" name="include_forks" value="1"{% if add_form and add_form.include_forks %} checked{% endif %}>{{ t('platforms.include_forks') }}</label>
+            <input type="hidden" name="include_archived" value="0"><label class="chk"><input type="checkbox" name="include_archived" value="1"{% if not add_form or add_form.include_archived %} checked{% endif %}>{{ t('platforms.include_archived') }}</label>
+            <input type="hidden" name="include_public" value="0"><label class="chk"><input type="checkbox" name="include_public" value="1"{% if not add_form or add_form.include_public %} checked{% endif %}>{{ t('platforms.include_public') }}</label>
+            <input type="hidden" name="include_private" value="0"><label class="chk"><input type="checkbox" name="include_private" value="1"{% if not add_form or add_form.include_private %} checked{% endif %}>{{ t('platforms.include_private') }}</label>
+            <input type="hidden" name="auto_enable" value="0"><label class="chk"><input type="checkbox" name="auto_enable" value="1"{% if not add_form or add_form.auto_enable %} checked{% endif %}>{{ t('platforms.auto_enable') }}</label>
             <button type="submit" class="small">{{ t('platforms.save_access') }}</button>
           </form>
         </div>
       </details>
+      <div class="actions">
+        {% if instance.accesses or instance.task_count %}
+        <button type="button" class="secondary small" disabled title="{{ t('platforms.remove_instance_in_use') }}">{{ t('platforms.remove_instance') }}</button>
+        {% else %}
+        <details class="confirm-delete">
+          <summary class="btn secondary small danger">{{ t('platforms.remove_instance') }}</summary>
+          <div class="detail-body">
+            <form method="post" action="/instances/{{ instance.id }}/delete" class="form">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <p class="hint">{{ t('platforms.remove_instance_hint') }}</p>
+              <button type="submit" class="danger small">{{ t('platforms.confirm_remove_instance') }}</button>
+            </form>
+          </div>
+        </details>
+        {% endif %}
+      </div>
     </article>
     {% else %}<div class="card empty">{{ t('platforms.no_instances') }}</div>{% endfor %}
   </section>
@@ -78,7 +95,16 @@
       </div>
       <div class="actions">
         <form method="post" action="/accesses/{{ selected_access.id }}/discover" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="small">{{ t('platforms.discover') }}</button></form>
-        <form method="post" action="/accesses/{{ selected_access.id }}/delete" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" class="secondary small">{{ t('platforms.remove_access') }}</button></form>
+        <details class="confirm-delete">
+          <summary class="btn secondary small">{{ t('platforms.remove_access') }}</summary>
+          <div class="detail-body">
+            <form method="post" action="/accesses/{{ selected_access.id }}/delete" class="form">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <p class="hint">{{ t('platforms.remove_access_hint') }}</p>
+              <button type="submit" class="danger small">{{ t('platforms.confirm_remove_access') }}</button>
+            </form>
+          </div>
+        </details>
       </div>
     </div>
 

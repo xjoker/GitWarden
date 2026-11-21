@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% block title %}{{ t('wizard.title') }}{% endblock %}
 {% block content %}
+<style>
+.wizard-targets:has(input[name="mode"][value="platform"]:checked) .mode-manual,
+.wizard-targets:has(input[name="mode"][value="manual"]:checked) .mode-platform{display:none}
+.wizard-targets label.card{cursor:pointer}
+.wizard-targets:has(input[name="mode"][value="platform"]:checked) label.card:has(input[value="platform"]),
+.wizard-targets:has(input[name="mode"][value="manual"]:checked) label.card:has(input[value="manual"]){border-color:var(--green);background:#E3F1EC}
+</style>
 <div class="wizard stack">
   <header class="page-header">
     <div>
@@ -53,28 +60,24 @@
         <input type="hidden" name="interval_minutes" value="{{ values['interval_minutes'] }}">
         <input type="hidden" name="enabled" value="{{ 1 if values['enabled'] else 0 }}">
 
-        <fieldset>
-          <legend>{{ t('wizard.target_mode') }}</legend>
-          <div class="grid">
-            <label class="card padded field">
-              <span class="row"><input type="radio" name="mode" value="platform"{% if mode == 'platform' %} checked{% endif %}> <strong>{{ t('wizard.mode_platform') }}</strong></span>
-              <span class="hint">{{ t('wizard.mode_platform_hint') }}</span>
-            </label>
-            <label class="card padded field">
-              <span class="row"><input type="radio" name="mode" value="manual"{% if mode == 'manual' %} checked{% endif %}> <strong>{{ t('wizard.mode_manual') }}</strong></span>
-              <span class="hint">{{ t('wizard.mode_manual_hint') }}</span>
-            </label>
-          </div>
-          <div class="actions" style="margin-top:12px">
-            <button type="submit" name="change_mode" value="platform" class="secondary" formnovalidate>{{ t('wizard.switch_platform') }}</button>
-            <button type="submit" name="change_mode" value="manual" class="secondary" formnovalidate>{{ t('wizard.switch_manual') }}</button>
-          </div>
-        </fieldset>
+        <div class="wizard-targets stack">
+          <fieldset>
+            <legend>{{ t('wizard.target_mode') }}</legend>
+            <div class="grid">
+              <label class="card padded field">
+                <span class="row"><input type="radio" name="mode" value="platform"{% if mode == 'platform' %} checked{% endif %}> <strong>{{ t('wizard.mode_platform') }}</strong></span>
+                <span class="hint">{{ t('wizard.mode_platform_hint') }}</span>
+              </label>
+              <label class="card padded field">
+                <span class="row"><input type="radio" name="mode" value="manual"{% if mode == 'manual' %} checked{% endif %}> <strong>{{ t('wizard.mode_manual') }}</strong></span>
+                <span class="hint">{{ t('wizard.mode_manual_hint') }}</span>
+              </label>
+            </div>
+          </fieldset>
 
-        {% if mode == 'platform' %}
-          <div class="grid">
+          <div class="grid mode-panel mode-platform">
             <label class="field">{{ t('field.access') }}
-              <select name="access_id" required>
+              <select name="access_id">
                 <option value="">{{ t('wizard.select_platform') }}</option>
                 {% for p in platforms %}
                 <option value="{{ p['id'] }}"{% if provision_values['access_id']|string == p['id']|string %} selected{% endif %}>{{ p['label'] }}</option>
@@ -83,23 +86,23 @@
               <span class="hint">{{ t('wizard.platform_target_hint') }}</span>
             </label>
             <label class="field">{{ t('field.owner') }}
-              <input name="owner" required value="{{ provision_values['owner'] }}">
+              <input name="owner" value="{{ provision_values['owner'] }}">
             </label>
             <label class="field">{{ t('field.target') }}
-              <input name="target_name" required value="{{ provision_values['name'] }}">
+              <input name="provision_name" value="{{ provision_values['name'] }}">
               <span class="hint">{{ t('wizard.platform_name_hint') }}</span>
             </label>
           </div>
-        {% else %}
-          <div class="stack">
+
+          <div class="stack mode-panel mode-manual">
             <label class="field">{{ t('wizard.target_name') }}
               <input name="target_name" value="{{ target_values['name'] }}" placeholder="{{ t('wizard.target_default') }}">
             </label>
             <label class="field">{{ t('wizard.mirror_url') }}
-              <input name="main_url" required value="{{ target_values['main_url'] }}" class="mono">
+              <input name="main_url" value="{{ target_values['main_url'] }}" class="mono">
             </label>
             <label class="field">{{ t('wizard.history_url') }}
-              <input name="history_url" required value="{{ target_values['history_url'] }}" class="mono">
+              <input name="history_url" value="{{ target_values['history_url'] }}" class="mono">
             </label>
             <label class="field">{{ t('wizard.target_credential') }}
               <select name="target_cred_id">
@@ -110,7 +113,7 @@
               </select>
             </label>
           </div>
-        {% endif %}
+        </div>
 
         <div class="actions" style="justify-content:space-between">
           <button type="submit" class="secondary" name="back" value="1" formnovalidate>{{ t('wizard.back') }}</button>
@@ -139,12 +142,14 @@
         {% if mode == 'platform' %}
           <input type="hidden" name="access_id" value="{{ provision_values['access_id'] }}">
           <input type="hidden" name="owner" value="{{ provision_values['owner'] }}">
-          <input type="hidden" name="target_name" value="{{ provision_values['name'] }}">
+          <input type="hidden" name="provision_name" value="{{ provision_values['name'] }}">
+          <input type="hidden" name="target_name" value="{{ target_values['name'] }}">
         {% else %}
           <input type="hidden" name="target_name" value="{{ target_values['name'] }}">
           <input type="hidden" name="main_url" value="{{ target_values['main_url'] }}">
           <input type="hidden" name="history_url" value="{{ target_values['history_url'] }}">
           <input type="hidden" name="target_cred_id" value="{{ target_values['cred_id'] }}">
+          <input type="hidden" name="provision_name" value="{{ provision_values['name'] }}">
         {% endif %}
 
         <fieldset>

@@ -90,7 +90,7 @@
     <label>{{ t('logs.category') }}
       <select name="category">
         <option value="">{{ t('logs.all_categories') }}</option>
-        {% for key in ('login', 'task', 'target', 'credential', 'access', 'instance') %}<option value="{{ key }}"{% if filters.category == key %} selected{% endif %}>{{ t('logs.category.' + key) }}</option>{% endfor %}
+        {% for key in ('login', 'logout', 'task', 'target', 'credential', 'access', 'instance', 'discovery') %}<option value="{{ key }}"{% if filters.category == key %} selected{% endif %}>{{ t('logs.category.' + key) }}</option>{% endfor %}
       </select>
     </label>
     <label>{{ t('logs.period') }}

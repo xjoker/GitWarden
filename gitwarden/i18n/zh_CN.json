@@ -584,5 +584,16 @@
   "run.audit_alert_unknown": "历史仓核对：多出 {count} 个未知标签（{items}）",
   "error.https_username_in_use": "此 HTTPS 凭据正被平台接入引用，不能清空用户名。",
   "error.https_secret": "新建 HTTPS 凭据必须提供密码或访问令牌。",
-  "error.ssh_known_hosts": "SSH 凭据必须提供已知主机信息。"
+  "error.ssh_known_hosts": "SSH 凭据必须提供已知主机信息。",
+  "platforms.remove_instance": "移除实例",
+  "platforms.confirm_remove_instance": "确认移除",
+  "platforms.remove_instance_hint": "移除此未被引用的平台实例。",
+  "platforms.remove_instance_in_use": "先移除引用此实例的全部接入和任务，才能删除该实例。",
+  "platforms.remove_access_hint": "移除此接入。已有任务将转为手工任务并保留原有档案。",
+  "platforms.confirm_remove_access": "确认移除",
+  "creds.delete_hint": "从 GitWarden 中移除此未被引用的凭据。",
+  "creds.delete_confirm": "确认删除",
+  "task.managed_source_readonly": "来源地址与凭据由上方所属平台接入自动管理，不能在此手工修改。",
+  "logs.category.logout": "退出登录",
+  "logs.category.discovery": "平台发现"
 }

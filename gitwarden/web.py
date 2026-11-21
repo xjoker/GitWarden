@@ -576,6 +576,60 @@ def _access_settings(form: Any, current: dict | None = None) -> dict[str, object
     return settings
 
 
+def _access_draft(form: Any, current: dict | None = None) -> dict[str, object]:
+    """Build a non-raising draft dict so preview/save errors keep the user's edits."""
+    current = current or {}
+
+    def text(name: str, default: str = "") -> str:
+        raw = form.get(name)
+        return default if raw is None else str(raw).strip()
+
+    draft: dict[str, object] = {
+        "cred_id": text(
+            "cred_id", "" if current.get("cred_id") is None else str(current.get("cred_id"))
+        ),
+        "scope_mode": text("scope_mode", str(current.get("scope_mode", "all"))),
+        "owners": _form_list(
+            form.get("owners") if form.get("owners") is not None else current.get("owners", [])
+        ),
+        "include_forks": _form_bool(
+            form.get("include_forks"), bool(current.get("include_forks", 0))
+        ),
+        "include_archived": _form_bool(
+            form.get("include_archived"), bool(current.get("include_archived", 1))
+        ),
+        "include_public": _form_bool(
+            form.get("include_public"), bool(current.get("include_public", 1))
+        ),
+        "include_private": _form_bool(
+            form.get("include_private"), bool(current.get("include_private", 1))
+        ),
+        "rule_mode": text("rule_mode", str(current.get("rule_mode", "exclude"))),
+        "patterns": _form_list(
+            form.get("patterns")
+            if form.get("patterns") is not None
+            else current.get("patterns", [])
+        ),
+        "auto_enable": _form_bool(form.get("auto_enable"), bool(current.get("auto_enable", 1))),
+        "detailed_default": _form_bool(
+            form.get("detailed_default"), bool(current.get("detailed_default", 0))
+        ),
+        "default_sync_interval_minutes": text(
+            "default_sync_interval_minutes",
+            str(current.get("default_sync_interval_minutes", 60)),
+        ),
+        "discover_interval_minutes": text(
+            "discover_interval_minutes",
+            str(current.get("discover_interval_minutes", 60)),
+        ),
+    }
+    if form.get("name") is not None:
+        draft["name"] = str(form.get("name"))
+    elif "name" in current:
+        draft["name"] = current["name"]
+    return draft
+
+
 def _discovery_context(result: object) -> dict[str, object]:
     """将发现分类和摘要传入平台页面。"""
     if isinstance(result, dict):
@@ -790,6 +844,7 @@ def _task_page(
     target_edit: dict | None = None,
     provision_values: dict | None = None,
     edit_open: bool = False,
+    add_target_open: bool = False,
 ):
     from gitwarden.ui_task import detail_page
 
@@ -804,6 +859,7 @@ def _task_page(
         target_edit=target_edit,
         provision_values=provision_values,
         edit_open=edit_open,
+        add_target_open=add_target_open,
     )
 
 
@@ -831,6 +887,9 @@ def _platform_page(
     discovery: object | None = None,
     preview_access_id: int | None = None,
     draft_settings: dict | None = None,
+    instance_open: bool = False,
+    add_access_instance_id: int | None = None,
+    add_access_values: dict | None = None,
 ):
     from gitwarden.ui_platforms import platform_page
 
@@ -843,6 +902,9 @@ def _platform_page(
         discovery=discovery,
         preview_access_id=preview_access_id,
         draft_settings=draft_settings,
+        instance_open=instance_open,
+        add_access_instance_id=add_access_instance_id,
+        add_access_values=add_access_values,
     )
 
 
@@ -992,7 +1054,12 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
         form = await request.form()
         lang = normalize_lang(str(form.get("lang", DEFAULT_LANG)))
         target = str(form.get("next") or "/login")
-        if not target.startswith("/") or target.startswith("//") or "\\" in target:
+        if (
+            not target.startswith("/")
+            or target.startswith("//")
+            or "\\" in target
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in target)
+        ):
             target = "/login"
         response = _redirect(target)
         response.set_cookie(LANG_COOKIE, lang, httponly=False, samesite="strict", path="/")
@@ -1102,11 +1169,34 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
     ):
         store = _store(request)
         task = _require_task(store, task_id)
-        values = _task_values(
-            name, source_url, source_cred_id, interval_minutes, _form_bool(enabled)
-        )
+        is_managed = bool(task.get("access_id"))
+        if is_managed:
+            managed_access = store.get_access(task["access_id"])
+            display_cred_id = (
+                str(managed_access["cred_id"])
+                if managed_access and managed_access.get("cred_id") is not None
+                else ("" if task["source_cred_id"] is None else str(task["source_cred_id"]))
+            )
+            values = _task_values(
+                name,
+                task["source_url"],
+                display_cred_id,
+                interval_minutes,
+                _form_bool(enabled),
+            )
+        else:
+            values = _task_values(
+                name, source_url, source_cred_id, interval_minutes, _form_bool(enabled)
+            )
         try:
-            fields = _parse_task(values)
+            if is_managed:
+                fields: dict[str, Any] = {
+                    "name": _text(values["name"], "任务名称"),
+                    "interval_minutes": _positive_int(values["interval_minutes"], "间隔分钟"),
+                    "enabled": bool(values["enabled"]),
+                }
+            else:
+                fields = _parse_task(values)
             if fields["interval_minutes"] != task["interval_minutes"]:
                 fields["next_run_at"] = None
             store.update_task(task_id, **fields)
@@ -1176,25 +1266,42 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
             )
         except (ValueError, sqlite3.IntegrityError) as exc:
             values["base_url"] = ""
-            return _platform_page(request, csrf, 400, error=_db_error(exc), values=values)
+            return _platform_page(
+                request, csrf, 400, error=_db_error(exc), values=values, instance_open=True
+            )
         return _redirect("/platforms")
 
     @app.post("/accesses")
     async def access_create(request: Request, csrf: VerifiedToken):
         form = await request.form()
         store = _store(request)
+        raw_instance_id = str(form.get("instance_id", "")).strip()
+        parsed_instance_id = int(raw_instance_id) if raw_instance_id.isdigit() else None
+        add_values = {
+            "name": str(form.get("name", "")),
+            "cred_id": str(form.get("cred_id", "")),
+            "include_forks": _form_bool(form.get("include_forks"), False),
+            "include_archived": _form_bool(form.get("include_archived"), True),
+            "include_public": _form_bool(form.get("include_public"), True),
+            "include_private": _form_bool(form.get("include_private"), True),
+            "auto_enable": _form_bool(form.get("auto_enable"), True),
+        }
         try:
-            instance_id = _positive_int(str(form.get("instance_id", "")), "实例")
+            instance_id = _positive_int(raw_instance_id, "实例")
             settings = _access_settings(form)
-            store.add_access(instance_id, _text(str(form.get("name", "")), "接入名称"), **settings)
+            access_id = store.add_access(
+                instance_id, _text(str(form.get("name", "")), "接入名称"), **settings
+            )
         except (ValueError, sqlite3.IntegrityError) as exc:
             return _platform_page(
                 request,
                 csrf,
                 400,
                 error=_redact(_db_error(exc), store.secret_values()),
+                add_access_instance_id=parsed_instance_id,
+                add_access_values=add_values,
             )
-        return _redirect("/platforms")
+        return _redirect(f"/platforms?access_id={access_id}")
 
     @app.post("/instances/{instance_id}/delete")
     def instance_delete(request: Request, instance_id: int, csrf: VerifiedToken):
@@ -1222,6 +1329,7 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
                 ),
             )
         form = await request.form()
+        draft_for_form = _access_draft(form, access)
         try:
             draft = _access_settings(form, access)
             store.validate_access_fields(access_id, draft)
@@ -1238,6 +1346,8 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
                     language_for_cookie(request.cookies.get(LANG_COOKIE)),
                     detail=detail,
                 ),
+                preview_access_id=access_id,
+                draft_settings=draft_for_form,
             )
         return _platform_page(
             request,
@@ -1259,6 +1369,7 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
                 ),
             )
         form = await request.form()
+        draft_for_form = _access_draft(form, access)
         try:
             fields = _access_settings(form, access)
             if form.get("name") is not None:
@@ -1271,8 +1382,10 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
                 csrf,
                 400,
                 error=_redact(_db_error(exc), store.secret_values()),
+                preview_access_id=access_id,
+                draft_settings=draft_for_form,
             )
-        return _redirect("/platforms")
+        return _redirect(f"/platforms?access_id={access_id}")
 
     @app.post("/accesses/{access_id}/delete")
     def access_delete(request: Request, access_id: int, csrf: VerifiedToken):
@@ -1289,9 +1402,8 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
                     "error.access_missing", language_for_cookie(request.cookies.get(LANG_COOKIE))
                 ),
             )
-        store.get_access(access_id)
         request.app.state.scheduler.trigger_discovery(access_id)
-        return _redirect("/platforms")
+        return _redirect(f"/platforms?access_id={access_id}")
 
     # 目标
     @app.post("/tasks/{task_id}/targets")
@@ -1321,7 +1433,13 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
             )
         except (ValueError, sqlite3.IntegrityError) as exc:
             return _task_page(
-                request, csrf, task_id, 400, error=_db_error(exc), target_values=values
+                request,
+                csrf,
+                task_id,
+                400,
+                error=_db_error(exc),
+                target_values=values,
+                add_target_open=True,
             )
         return _redirect(f"/tasks/{task_id}")
 
@@ -1359,6 +1477,7 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
                 400,
                 error=t("error.provision_failed", detail=detail),
                 provision_values=values,
+                add_target_open=True,
             )
         return _redirect(f"/tasks/{task_id}")
 

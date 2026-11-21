@@ -228,7 +228,9 @@ def _preview_context(discovery: Any) -> tuple[list[dict[str, Any]], list[dict[st
 
 
 def _instances_context(store, selected_access_id: int | None) -> list[dict[str, Any]]:
-    tasks = Counter(task.get("access_id") for task in store.list_tasks())
+    all_tasks = store.list_tasks()
+    tasks = Counter(task.get("access_id") for task in all_tasks)
+    instance_tasks = Counter(task.get("instance_id") for task in all_tasks)
     all_accesses = store.list_accesses()
     by_instance: dict[int, list[dict[str, Any]]] = {}
     for access in all_accesses:
@@ -241,6 +243,7 @@ def _instances_context(store, selected_access_id: int | None) -> list[dict[str, 
     for instance in store.list_instances():
         row = dict(instance)
         row["accesses"] = by_instance.get(instance["id"], [])
+        row["task_count"] = instance_tasks.get(instance["id"], 0)
         result.append(row)
     return result
 
@@ -279,6 +282,9 @@ def platform_page(
     discovery: Any | None = None,
     preview_access_id: int | None = None,
     draft_settings: dict[str, Any] | None = None,
+    instance_open: bool = False,
+    add_access_instance_id: int | None = None,
+    add_access_values: dict[str, Any] | None = None,
 ):
     """Render the platforms page while retaining a preview's unsaved draft."""
 
@@ -298,6 +304,17 @@ def platform_page(
     preview_items, preview_summary = _preview_context(discovery)
     web = _web()
     credentials = [c for c in web._cred_summaries(store) if c["kind"] == "https"]
+    default_add_access = {
+        "name": "",
+        "cred_id": "",
+        "include_forks": False,
+        "include_archived": True,
+        "include_public": True,
+        "include_private": True,
+        "auto_enable": True,
+    }
+    if add_access_values:
+        default_add_access.update(add_access_values)
     page = web._page(
         request,
         "platforms.html",
@@ -312,6 +329,9 @@ def platform_page(
         min_sync=store.min_sync_minutes,
         min_discovery=store.min_discovery_minutes,
         instance_values=_platform_instance_values(values),
+        instance_open=instance_open,
+        add_access_instance_id=add_access_instance_id,
+        add_access_values=default_add_access,
         preview=discovery,
         preview_items=preview_items,
         preview_summary=preview_summary,
