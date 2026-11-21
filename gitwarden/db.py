@@ -115,6 +115,14 @@ CREATE TABLE IF NOT EXISTS activity(id INTEGER PRIMARY KEY,
     object TEXT,
     detail TEXT,
     ip TEXT);
+CREATE INDEX IF NOT EXISTS idx_targets_task_id ON targets(task_id);
+CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id);
+CREATE INDEX IF NOT EXISTS idx_events_at ON events(at);
+CREATE INDEX IF NOT EXISTS idx_runs_task_started ON runs(task_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at);
+CREATE INDEX IF NOT EXISTS idx_run_steps_run_id ON run_steps(run_id);
+CREATE INDEX IF NOT EXISTS idx_run_refs_run_id ON run_refs(run_id);
+CREATE INDEX IF NOT EXISTS idx_activity_at ON activity(at);
 """
 
 _CRED_FIELDS = {"name", "kind", "username", "secret", "private_key", "known_hosts"}
@@ -312,6 +320,9 @@ class Store:
         if used and used["n"]:
             raise ValueError(f"凭据 {cred_id} 正被任务或目标引用，不能删除")
         self._exec("DELETE FROM creds WHERE id=?", (cred_id,))
+
+    def cred_used_by_access(self, cred_id: int) -> bool:
+        return self._one("SELECT id FROM accesses WHERE cred_id=? LIMIT 1", (cred_id,)) is not None
 
     def secret_values(self) -> list[str]:
         values = []
@@ -614,6 +625,79 @@ class Store:
         return self._rows(
             "SELECT * FROM events WHERE task_id=? ORDER BY id DESC LIMIT ?", (task_id, limit)
         )
+
+    def get_event(self, task_id: int, event_id: int) -> dict[str, Any] | None:
+        return self._one("SELECT * FROM events WHERE id=? AND task_id=?", (event_id, task_id))
+
+    def count_events_by_task(self, *, preserved_only: bool = False) -> dict[int, int]:
+        where = " WHERE preserved_ref IS NOT NULL AND preserved_ref != ''" if preserved_only else ""
+        rows = self._rows(f"SELECT task_id, count(*) AS n FROM events{where} GROUP BY task_id")
+        return {int(row["task_id"]): int(row["n"]) for row in rows}
+
+    def count_preserved_events(self, task_id: int) -> int:
+        row = self._one(
+            "SELECT count(*) AS n FROM events "
+            "WHERE task_id=? AND preserved_ref IS NOT NULL AND preserved_ref != ''",
+            (task_id,),
+        )
+        return int(row["n"]) if row else 0
+
+    def overview_snapshot(
+        self, *, include_feed: bool = True, feed_limit: int = 5
+    ) -> dict[str, Any]:
+        """在单个 SQLite 连接内批量获取总览与任务列表所需的全部数据。"""
+        with closing(self._connect()) as conn:
+            def fetch_all(sql: str, args: tuple = ()) -> list[dict[str, Any]]:
+                return [_decode_row(dict(row)) for row in conn.execute(sql, args)]
+
+            tasks = fetch_all("SELECT * FROM tasks ORDER BY id")
+            targets_by_task: dict[int, list[dict[str, Any]]] = {}
+            for row in fetch_all("SELECT * FROM targets ORDER BY id"):
+                targets_by_task.setdefault(int(row["task_id"]), []).append(row)
+
+            latest_runs: dict[int, dict[str, Any]] = {}
+            for row in fetch_all(
+                "SELECT r.* FROM runs r "
+                "INNER JOIN (SELECT task_id, MAX(id) AS max_id FROM runs GROUP BY task_id) latest "
+                "ON r.id = latest.max_id"
+            ):
+                latest_runs[int(row["task_id"])] = row
+
+            accesses = {
+                int(row["id"]): row for row in fetch_all("SELECT * FROM accesses ORDER BY id")
+            }
+            instances = {
+                int(row["id"]): row for row in fetch_all("SELECT * FROM instances ORDER BY id")
+            }
+            preserved_counts = {
+                int(row["task_id"]): int(row["n"])
+                for row in fetch_all(
+                    "SELECT task_id, count(*) AS n FROM events "
+                    "WHERE preserved_ref IS NOT NULL AND preserved_ref != '' GROUP BY task_id"
+                )
+            }
+            snapshot: dict[str, Any] = {
+                "tasks": tasks,
+                "targets_by_task": targets_by_task,
+                "latest_runs": latest_runs,
+                "accesses": accesses,
+                "instances": instances,
+                "preserved_counts": preserved_counts,
+            }
+            if include_feed:
+                snapshot["recent_events"] = fetch_all(
+                    "SELECT e.*, t.name AS task_name FROM events e "
+                    "JOIN tasks t ON t.id = e.task_id "
+                    "ORDER BY COALESCE(e.at, '') DESC, e.id DESC LIMIT ?",
+                    (feed_limit,),
+                )
+                snapshot["recent_runs"] = fetch_all(
+                    "SELECT r.*, t.name AS task_name FROM runs r "
+                    "JOIN tasks t ON t.id = r.task_id "
+                    "ORDER BY COALESCE(r.started_at, '') DESC, r.id DESC LIMIT ?",
+                    (feed_limit,),
+                )
+            return snapshot
 
     def start_run(
         self, task_id: int, initial_backup: bool = False, progress: str | None = None

@@ -294,18 +294,25 @@ class PlatformClient:
             raise
         return True
 
+    _MAX_HOOK_PAGES = 100
+
     def _list_hooks(self, path: str) -> list[dict[str, Any]]:
-        hooks = []
+        hooks: list[dict[str, Any]] = []
         page = 1
         separator = "&" if "?" in path else "?"
-        while True:
+        while page <= self._MAX_HOOK_PAGES:
             rows, _ = self._request(
                 "GET", f"{path}{separator}" + urlencode({"page": page, "limit": self.page_size})
             )
+            if not isinstance(rows, list):
+                raise PlatformError(message("platform.list_not_array", path=path))
             if not rows:
                 return hooks
             hooks.extend(rows)
+            if len(rows) < self.page_size:
+                return hooks
             page += 1
+        raise PlatformError(message("platform.list_incomplete", path=path))
 
     def list_hooks(self, owner: str, name: str) -> dict[str, list[Any]]:
         repository_path = self._repo_path(owner, name, "/hooks")

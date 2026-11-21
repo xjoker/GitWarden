@@ -580,5 +580,9 @@
   "logs.activity.credential_update": "修改凭据",
   "logs.step.maintenance": "档案整理",
   "run.interrupted": "服务重启时中断",
-  "error.target_urls_same": "主镜像与历史仓地址必须不同"
+  "error.target_urls_same": "主镜像与历史仓地址必须不同",
+  "run.audit_alert_unknown": "历史仓核对：多出 {count} 个未知标签（{items}）",
+  "error.https_username_in_use": "此 HTTPS 凭据正被平台接入引用，不能清空用户名。",
+  "error.https_secret": "新建 HTTPS 凭据必须提供密码或访问令牌。",
+  "error.ssh_known_hosts": "SSH 凭据必须提供已知主机信息。"
 }

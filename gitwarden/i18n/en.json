@@ -580,5 +580,9 @@
   "logs.activity.credential_update": "Credential updated",
   "logs.step.maintenance": "Archive maintenance",
   "run.interrupted": "Interrupted by service restart",
-  "error.target_urls_same": "Mirror and history repository URLs must be different"
+  "error.target_urls_same": "Mirror and history repository URLs must be different",
+  "run.audit_alert_unknown": "History repo audit: {count} unexpected tag(s) ({items})",
+  "error.https_username_in_use": "Username cannot be cleared while this HTTPS credential is used by a platform access.",
+  "error.https_secret": "A password or access token is required for a new HTTPS credential.",
+  "error.ssh_known_hosts": "Known hosts are required for an SSH credential."
 }

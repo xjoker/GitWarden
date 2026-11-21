@@ -5,13 +5,15 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from itertools import batched
 from pathlib import Path
 
-from gitwarden.archive import _locked, _read_refs
+from gitwarden.archive import _read_refs, archive_lock
 from gitwarden.git import rev_parse, run
 from gitwarden.telemetry import step as telemetry_step
 
 BINDING_TAG = "refs/tags/gw/binding"
+PUSH_BATCH_SIZE = 150
 
 
 class TargetNotEmpty(Exception):
@@ -81,6 +83,7 @@ class PushResult:
     main_conflicts: list[str] = field(default_factory=list)
     delete_guard: list[str] = field(default_factory=list)
     main_ok: bool = False
+    history_refs: dict[str, str] | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -124,49 +127,81 @@ def forget(archive: Path, target_id: int) -> None:
     """删除档案里该目标的推送记录；目标换地址或删除后，旧记录不再对应任何远端。"""
     if not archive.exists():
         return
-    with _locked(archive):
+    with archive_lock(archive):
         refs = _read_refs(archive, f"refs/pushed/{target_id}/")
         _update_refs(archive, [f"delete {ref} {oid}\n" for ref, oid in refs.items()])
 
 
 def bind(archive: Path, target: Target, *, env: dict[str, str] | None = None) -> None:
-    for url in (target.main_url, target.history_url):
-        if _ls_remote(url, env):
-            raise TargetNotEmpty(url)
-    blob = run(
-        archive,
-        "hash-object",
-        "-w",
-        "--stdin",
-        input=f"binding: {secrets.token_hex(16)}\ntarget: {target.id}\n",
-    ).stdout.strip()
-    body = (
-        f"object {blob}\n"
-        "type blob\n"
-        "tag gw/binding\n"
-        f"tagger GitWarden <gitwarden@localhost> {int(datetime.now(UTC).timestamp())} +0000\n"
-        "\n"
-        "GitWarden binding\n"
-    )
-    tag_oid = run(archive, "mktag", input=body).stdout.strip()
-    run(
-        archive,
-        "push",
-        f"--force-with-lease={BINDING_TAG}:",
-        target.history_url,
-        f"{tag_oid}:{BINDING_TAG}",
-        env=env,
-    )
-    run(archive, "update-ref", _binding_ref(target), tag_oid)
+    with archive_lock(archive):
+        for url in (target.main_url, target.history_url):
+            if _ls_remote(url, env):
+                raise TargetNotEmpty(url)
+        blob = run(
+            archive,
+            "hash-object",
+            "-w",
+            "--stdin",
+            input=f"binding: {secrets.token_hex(16)}\ntarget: {target.id}\n",
+        ).stdout.strip()
+        body = (
+            f"object {blob}\n"
+            "type blob\n"
+            "tag gw/binding\n"
+            f"tagger GitWarden <gitwarden@localhost> {int(datetime.now(UTC).timestamp())} +0000\n"
+            "\n"
+            "GitWarden binding\n"
+        )
+        tag_oid = run(archive, "mktag", input=body).stdout.strip()
+        run(
+            archive,
+            "push",
+            f"--force-with-lease={BINDING_TAG}:",
+            target.history_url,
+            f"{tag_oid}:{BINDING_TAG}",
+            env=env,
+        )
+        run(archive, "update-ref", _binding_ref(target), tag_oid)
 
 
 def _push_history(
     archive: Path, target: Target, pending: list[str], env: dict[str, str] | None
 ) -> None:
     """推送失败不抛错，由随后的 ls-remote 核对决定结果。"""
-    args = [f"--force-with-lease=refs/tags/gw/{u}:" for u in pending]
-    args += [f"refs/preserved/{u}:refs/tags/gw/{u}" for u in pending]
-    run(archive, "push", target.history_url, *args, check=False, env=env)
+    for chunk in batched(pending, PUSH_BATCH_SIZE):
+        args = [f"--force-with-lease=refs/tags/gw/{u}:" for u in chunk]
+        args += [f"refs/preserved/{u}:refs/tags/gw/{u}" for u in chunk]
+        run(archive, "push", target.history_url, *args, check=False, env=env)
+
+
+def _preserved_objects(archive: Path) -> dict[str, str]:
+    """返回 {保全标签短名: 标签指向的目标 OID}。"""
+    out = run(
+        archive,
+        "for-each-ref",
+        "--format=%(refname) %(object)",
+        "refs/preserved",
+    ).stdout
+    objects: dict[str, str] = {}
+    for line in out.splitlines():
+        name, _, obj = line.partition(" ")
+        if name:
+            objects[name.removeprefix("refs/preserved/")] = obj.strip()
+    return objects
+
+
+def _push_main_batches(
+    archive: Path,
+    url: str,
+    entries: list[tuple[str, str]],
+    *,
+    delete: bool,
+    env: dict[str, str] | None,
+) -> None:
+    for chunk in batched(entries, PUSH_BATCH_SIZE):
+        args = [f"--force-with-lease={ref}:{e}" for ref, e in chunk]
+        args += [f":{ref}" if delete else f"{ref}:{ref}" for ref, _ in chunk]
+        run(archive, "push", url, *args, check=False, env=env)
 
 
 def _gate_allows(
@@ -202,11 +237,12 @@ def push_target(
     guard: DeleteGuard | None = None,
 ) -> PushResult:
     guard = guard or _delete_guard
-    with _locked(archive):
+    with archive_lock(archive):
         binding = rev_parse(archive, _binding_ref(target))
         if binding is None:
             raise NotBound(target.id)
-        if _ls_remote(target.history_url, env).get(BINDING_TAG) != binding:
+        remote_hist = _ls_remote(target.history_url, env)
+        if remote_hist.get(BINDING_TAG) != binding:
             raise TargetMismatch(target.history_url)
 
         result = PushResult()
@@ -220,8 +256,9 @@ def push_target(
             pending = sorted(set(local) - recorded)
             if pending:
                 _push_history(archive, target, pending, env)
+                remote_hist = _ls_remote(target.history_url, env)
 
-            remote_hist = _ls_remote(target.history_url, env)
+            result.history_refs = remote_hist
             confirmed: set[str] = set()
             commands = []
             for u, oid in sorted(local.items()):
@@ -235,15 +272,13 @@ def push_target(
                     result.history_conflicts.append(u)
             _update_refs(archive, commands)
 
-            confirmed_objects = {
-                run(
-                    archive,
-                    "for-each-ref",
-                    "--format=%(object)",
-                    f"refs/preserved/{u}",
-                ).stdout.strip()
-                for u in confirmed
-            }
+            if confirmed:
+                preserved_objs = _preserved_objects(archive)
+                confirmed_objects = {
+                    preserved_objs[u] for u in confirmed if u in preserved_objs
+                }
+            else:
+                confirmed_objects = set()
         _reconcile_main(archive, target, confirmed_objects, confirmed, result, env, guard)
         return result
 
@@ -301,13 +336,9 @@ def _reconcile_main(
         updates = [(ref, e) for ref, e in to_push if ref in want]
         deletes = [(ref, e) for ref, e in to_push if ref not in want]
         if deletes:
-            args = [f"--force-with-lease={ref}:{e}" for ref, e in deletes]
-            args += [f":{ref}" for ref, _ in deletes]
-            run(archive, "push", target.main_url, *args, check=False, env=env)
+            _push_main_batches(archive, target.main_url, deletes, delete=True, env=env)
         if updates:
-            args = [f"--force-with-lease={ref}:{e}" for ref, e in updates]
-            args += [f"{ref}:{ref}" for ref, _ in updates]
-            run(archive, "push", target.main_url, *args, check=False, env=env)
+            _push_main_batches(archive, target.main_url, updates, delete=False, env=env)
 
         remote = {
             r: o
@@ -352,13 +383,20 @@ def _sync_records(
                 records.pop(ref, None)
 
 
-def audit(archive: Path, target: Target, *, env: dict[str, str] | None = None) -> AuditResult:
+def audit(
+    archive: Path,
+    target: Target,
+    *,
+    env: dict[str, str] | None = None,
+    remote_refs: dict[str, str] | None = None,
+) -> AuditResult:
     with telemetry_step("audit"):
         hprefix = _history_prefix(target)
         recorded = {r.removeprefix(hprefix): o for r, o in _read_refs(archive, hprefix).items()}
+        raw_remote = _ls_remote(target.history_url, env) if remote_refs is None else remote_refs
         remote = {
             r.removeprefix("refs/tags/gw/"): o
-            for r, o in _ls_remote(target.history_url, env).items()
+            for r, o in raw_remote.items()
             if r.startswith("refs/tags/gw/") and r != BINDING_TAG
         }
         return AuditResult(

@@ -111,6 +111,24 @@ def list_refs(store: Store, run_id: int) -> list[dict[str, Any]]:
     )
 
 
+def recent_events(store: Store, limit: int = 5) -> list[dict[str, Any]]:
+    return store._rows(  # noqa: SLF001 - 统一复用 Store 的连接和行解码
+        "SELECT e.*, t.name AS task_name FROM events e "
+        "JOIN tasks t ON t.id = e.task_id "
+        "ORDER BY COALESCE(e.at, '') DESC, e.id DESC LIMIT ?",
+        (max(1, limit),),
+    )
+
+
+def recent_runs(store: Store, limit: int = 5) -> list[dict[str, Any]]:
+    return store._rows(  # noqa: SLF001 - 统一复用 Store 的连接和行解码
+        "SELECT r.*, t.name AS task_name FROM runs r "
+        "JOIN tasks t ON t.id = r.task_id "
+        "ORDER BY COALESCE(r.started_at, '') DESC, r.id DESC LIMIT ?",
+        (max(1, limit),),
+    )
+
+
 def _page(page: int, page_size: int) -> tuple[int, int]:
     page = max(1, page)
     page_size = max(1, min(page_size, 200))

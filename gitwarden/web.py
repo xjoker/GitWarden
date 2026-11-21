@@ -28,10 +28,10 @@ from fastapi.templating import Jinja2Templates
 from jinja2 import pass_context
 from starlette.background import BackgroundTask
 
-from gitwarden.archive import ArchiveBusy
+from gitwarden.archive import ArchiveBusy, archive_lock
 from gitwarden.config import Config
 from gitwarden.db import Store, now
-from gitwarden.git import GitError, run
+from gitwarden.git import GitError, execution_context, run
 from gitwarden.i18n import (
     CSRF_COOKIE,
     DEFAULT_LANG,
@@ -78,7 +78,6 @@ ICON_FILES = {
 }
 # URL 不带版本号，所以缓存一天、不用 immutable。
 ICON_HEADERS = {"Cache-Control": "public, max-age=86400", "X-Content-Type-Options": "nosniff"}
-_ALL_ROWS = 2**31 - 1
 
 STATUS_LABELS = {
     "ok": "common.status.success",
@@ -848,10 +847,7 @@ def _platform_page(
 
 
 def _find_event(store: Store, task_id: int, event_id: int) -> dict | None:
-    for event in store.list_events(task_id, limit=_ALL_ROWS):
-        if event["id"] == event_id:
-            return event
-    return None
+    return store.get_event(task_id, event_id)
 
 
 def _icon_route(name: str, media_type: str):
@@ -911,6 +907,7 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
         openapi_url=None,
     )
     app.state.data_dir = config.data_dir
+    app.state.stall_minutes = config.stall_minutes
     app.state.sessions = {}
     app.state.sessions_lock = threading.Lock()
     app.state.session_idle_ttl = SESSION_IDLE_TTL
@@ -926,7 +923,8 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
         token = set_language(language_for_cookie(request.cookies.get(LANG_COOKIE)))
         status = 500
         try:
-            response = await call_next(request)
+            with execution_context(stall_minutes=config.stall_minutes):
+                response = await call_next(request)
             status = response.status_code
             for header, value in SECURITY_HEADERS.items():
                 response.headers.setdefault(header, value)
@@ -1343,14 +1341,15 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
             selected_access = _access_id(access_id)
             if store.get_access(selected_access) is None:
                 raise ValueError(t("error.access_missing"))
-            provision_target(
-                store,
-                request.app.state.data_dir,
-                task_id,
-                selected_access,
-                _text(owner, "所有者"),
-                _text(name, "目标名称"),
-            )
+            with execution_context(stall_minutes=config.stall_minutes):
+                provision_target(
+                    store,
+                    request.app.state.data_dir,
+                    task_id,
+                    selected_access,
+                    _text(owner, "所有者"),
+                    _text(name, "目标名称"),
+                )
         except (ArchiveBusy, GitError, PlatformError, ValueError) as exc:
             detail = _redact(str(exc), store.secret_values())
             return _task_page(
@@ -1368,7 +1367,8 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
         store = _store(request)
         target = _require_target(store, target_id)
         try:
-            retry_target(store, request.app.state.data_dir, target_id)
+            with execution_context(stall_minutes=config.stall_minutes):
+                retry_target(store, request.app.state.data_dir, target_id)
         except (ArchiveBusy, GitError, PlatformError, ValueError) as exc:
             detail = _redact(str(exc), store.secret_values())
             return _task_page(request, csrf, target["task_id"], 400, error=detail)
@@ -1379,7 +1379,8 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
         store = _store(request)
         target = _require_target(store, target_id)
         try:
-            audit_target(store, request.app.state.data_dir, target_id)
+            with execution_context(stall_minutes=config.stall_minutes):
+                audit_target(store, request.app.state.data_dir, target_id)
             if not store.get_target(target_id).get("last_audit_at"):
                 store._exec(
                     "UPDATE targets SET last_audit_at=? WHERE id=?",
@@ -1395,7 +1396,8 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
         store = _store(request)
         target = _require_target(store, target_id)
         try:
-            bind_target(store, request.app.state.data_dir, target_id)
+            with execution_context(stall_minutes=config.stall_minutes):
+                bind_target(store, request.app.state.data_dir, target_id)
         except TargetNotEmpty as exc:
             message = t(
                 "error.target_not_empty", url=_redact(str(exc.args[0]), store.secret_values())
@@ -1492,22 +1494,31 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
         if event is None or not event["preserved_ref"]:
             raise HTTPException(404, t("error.no_bundle"))
         data_dir: Path = request.app.state.data_dir
+        archive = archive_path(data_dir, task)
         work = data_dir / "work"
         work.mkdir(parents=True, exist_ok=True)
         tmp = Path(tempfile.mkdtemp(prefix="bundle-", dir=work))
         try:
             out = tmp / "restore.bundle"
-            run(
-                archive_path(data_dir, task),
-                "bundle",
-                "create",
-                str(out),
-                event["preserved_ref"],
-            )
+            with execution_context(stall_minutes=config.stall_minutes):
+                with archive_lock(archive):
+                    run(
+                        archive,
+                        "bundle",
+                        "create",
+                        str(out),
+                        event["preserved_ref"],
+                    )
+        except ArchiveBusy:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise HTTPException(409, t("error.archive_busy")) from None
         except GitError:
             shutil.rmtree(tmp, ignore_errors=True)
             log.exception("生成恢复包失败: 任务 %s 事件 %s", task_id, event_id)
             raise HTTPException(500, t("error.bundle_failed")) from None
+        except BaseException:
+            shutil.rmtree(tmp, ignore_errors=True)
+            raise
         filename = f"{re.sub(r'[^A-Za-z0-9_-]', '_', task['name'])}-{event_id}.bundle"
         return FileResponse(
             out,
@@ -1529,15 +1540,24 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
         private_key: Annotated[str, Form()] = "",
         known_hosts: Annotated[str, Form()] = "",
     ):
+        store = _store(request)
         values = {"name": name, "kind": kind, "username": username}
         private_key = private_key.replace("\r\n", "\n")
         known_hosts = known_hosts.replace("\r\n", "\n")
+        if known_hosts.strip():
+            values["known_hosts"] = known_hosts
+        secrets_ = [*store.secret_values(), secret, private_key]
         try:
             if kind not in CRED_KINDS:
                 raise ValueError(t("error.credential_kind"))
-            if kind == "ssh" and not private_key.strip():
-                raise ValueError(t("error.ssh_key"))
-            _store(request).add_cred(
+            if kind == "https" and not secret.strip():
+                raise ValueError(t("error.https_secret"))
+            if kind == "ssh":
+                if not private_key.strip():
+                    raise ValueError(t("error.ssh_key"))
+                if not known_hosts.strip():
+                    raise ValueError(t("error.ssh_known_hosts"))
+            store.add_cred(
                 _text(name, "凭据名称"),
                 kind,
                 username.strip() or None,
@@ -1546,7 +1566,13 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
                 known_hosts if known_hosts.strip() else None,
             )
         except (ValueError, sqlite3.IntegrityError) as exc:
-            return _creds_page(request, csrf, 400, error=_db_error(exc), values=values)
+            return _creds_page(
+                request,
+                csrf,
+                400,
+                error=_redact(_db_error(exc), secrets_),
+                values={key: _redact(value, secrets_) for key, value in values.items()},
+            )
         return _redirect("/creds")
 
     @app.post("/creds/{cred_id}/edit")
@@ -1571,10 +1597,19 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
         try:
             if kind is not None and kind != credential["kind"]:
                 raise ValueError(t("error.credential_type_immutable"))
-            fields = {"name": _text(name, "凭据名称"), "username": username.strip() or None}
+            cleaned_username = username.strip() or None
+            if (
+                credential["kind"] == "https"
+                and cleaned_username is None
+                and store.cred_used_by_access(cred_id)
+            ):
+                raise ValueError(t("error.https_username_in_use"))
+            fields = {"name": _text(name, "凭据名称"), "username": cleaned_username}
             if credential["kind"] == "https" and secret:
                 fields["secret"] = secret
             if credential["kind"] == "ssh":
+                if known_hosts is not None and not known_hosts.strip():
+                    raise ValueError(t("error.ssh_known_hosts"))
                 if private_key.strip():
                     fields["private_key"] = private_key
                 if known_hosts is not None:

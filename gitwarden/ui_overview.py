@@ -10,11 +10,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 
 from gitwarden.db import Store
+from gitwarden.logs import recent_events, recent_runs
 from gitwarden.scheduler import effective_interval
 from gitwarden.web import CsrfToken, _page, _store
 
 _PAGE_SIZE = 20
-_ALL_ROWS = 2**31 - 1
+_UNSET = object()
 
 _STATUS_LABELS = {
     "healthy": "tasks.status.healthy",
@@ -49,6 +50,10 @@ _RUN_LABELS = {
     "busy": "common.status.busy",
     "partial": "tasks.run.partial",
     "delete_guard": "tasks.run.delete_guard",
+    "audit_alert": "common.status.audit_alert",
+    "gate_blocked": "common.status.gate_blocked",
+    "conflict": "common.status.conflict",
+    "history_conflict": "common.status.history_conflict",
     "running": "tasks.run.running",
 }
 
@@ -97,7 +102,13 @@ def _target_summary(target: dict[str, Any], task: dict[str, Any] | None = None) 
     }
 
 
-def _managed_summary(store: Store, task: dict[str, Any]) -> dict[str, Any]:
+def _managed_summary(
+    store: Store,
+    task: dict[str, Any],
+    *,
+    accesses: dict[int, dict[str, Any]] | None = None,
+    instances: dict[int, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     access_id = task.get("access_id")
     if not access_id:
         return {
@@ -106,17 +117,26 @@ def _managed_summary(store: Store, task: dict[str, Any]) -> dict[str, Any]:
             "access_name": None,
             "label_key": "tasks.managed.manual",
         }
-    access = store.get_access(int(access_id))
-    instance = store.get_instance(access["instance_id"]) if access else None
+    aid = int(access_id)
+    access = accesses.get(aid) if accesses is not None else store.get_access(aid)
+    instance = (
+        (
+            instances.get(int(access["instance_id"]))
+            if instances is not None
+            else store.get_instance(access["instance_id"])
+        )
+        if access
+        else None
+    )
     if not access or not instance:
         return {
-            "access_id": int(access_id),
+            "access_id": aid,
             "instance_name": None,
             "access_name": None,
             "label_key": "tasks.managed.unknown",
         }
     return {
-        "access_id": int(access_id),
+        "access_id": aid,
         "instance_name": instance["name"],
         "access_name": access["name"],
         "label_key": None,
@@ -136,11 +156,20 @@ def _overdue_seconds(task: dict[str, Any], interval: float) -> float:
 
 
 def task_summary(
-    store: Store, task: dict[str, Any], scheduler: object | None = None
+    store: Store,
+    task: dict[str, Any],
+    scheduler: object | None = None,
+    *,
+    targets_rows: Any = _UNSET,
+    latest_run: Any = _UNSET,
+    accesses: dict[int, dict[str, Any]] | None = None,
+    instances: dict[int, dict[str, Any]] | None = None,
+    preserved_count: int | None = None,
 ) -> dict[str, Any]:
     """汇总任务的备份、调度和管理状态。"""
 
-    targets = [_target_summary(row, task) for row in store.list_targets(task["id"])]
+    raw_targets = store.list_targets(task["id"]) if targets_rows is _UNSET else targets_rows
+    targets = [_target_summary(row, task) for row in raw_targets]
     incomplete = (
         not targets
         or any(not target["bound"] or target["last_status"] != "ok" for target in targets)
@@ -153,10 +182,11 @@ def task_summary(
     overdue = _overdue_seconds(task, interval) if task.get("enabled") else 0.0
     missing_targets = not targets
     target_attention = any(target["status_key"] != "tasks.target.healthy" for target in targets)
-    # 大批删除保护拦截时来源采集是成功的，交给目标状态显示“需要处理”。
-    source_failure = bool(
-        task.get("last_status") and task.get("last_status") not in {"ok", "delete_guard"}
-    )
+    # 仅在来源/整轮失败（last_status == 'failed'）时标记为 failing；
+    # partial / delete_guard / audit_alert / busy 归为 needs_attention。
+    last_status = task.get("last_status")
+    source_failure = last_status == "failed"
+    non_ok_status = bool(last_status and last_status != "ok")
     managed_state_attention = str(task.get("managed_state") or "active") in {
         "not_visible",
         "excluded",
@@ -168,17 +198,19 @@ def task_summary(
         or target_attention
         or task.get("external_note")
         or source_failure
+        or non_ok_status
         or managed_state_attention
     )
 
-    latest_runs = store.list_runs(task["id"], limit=1)
-    latest_run = latest_runs[0] if latest_runs else None
+    if latest_run is _UNSET:
+        latest_runs = store.list_runs(task["id"], limit=1)
+        latest_run = latest_runs[0] if latest_runs else None
     run_running = bool(latest_run and not latest_run.get("finished_at"))
     run_status = (latest_run.get("status") if latest_run else None) or (
         "running" if run_running else None
     )
 
-    managed = _managed_summary(store, task)
+    managed = _managed_summary(store, task, accesses=accesses, instances=instances)
     state = str(task.get("managed_state") or "active")
     if state != "active":
         status_key = state if state in _STATUS_LABELS else "needs_attention"
@@ -190,8 +222,6 @@ def task_summary(
         status_key = "needs_attention"
     elif incomplete:
         status_key = "incomplete"
-    elif task.get("last_status") and task.get("last_status") not in {"ok", "delete_guard"}:
-        status_key = "failing"
     else:
         status_key = "healthy"
 
@@ -208,8 +238,10 @@ def task_summary(
         else:
             extension_kind = "duration"
 
-    preserved = sum(
-        1 for event in store.list_events(task["id"], limit=_ALL_ROWS) if event.get("preserved_ref")
+    preserved = (
+        store.count_preserved_events(task["id"])
+        if preserved_count is None
+        else preserved_count
     )
     return {
         **task,
@@ -292,10 +324,20 @@ def _query_url(request: Request, page: int) -> str:
     return f"/tasks?{urlencode(params)}"
 
 
-def _access_options(store: Store) -> list[dict[str, Any]]:
+def _access_options(
+    store: Store,
+    *,
+    accesses: dict[int, dict[str, Any]] | None = None,
+    instances: dict[int, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     options = [{"value": "manual", "label_key": "tasks.managed.manual"}]
-    for access in store.list_accesses():
-        instance = store.get_instance(access["instance_id"])
+    access_rows = list(accesses.values()) if accesses is not None else store.list_accesses()
+    for access in access_rows:
+        instance = (
+            instances.get(int(access["instance_id"]))
+            if instances is not None
+            else store.get_instance(access["instance_id"])
+        )
         if not instance:
             continue
         options.append(
@@ -307,44 +349,64 @@ def _access_options(store: Store) -> list[dict[str, Any]]:
     return options
 
 
+def _format_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {**event, "kind_key": _EVENT_LABELS.get(event["kind"], "common.empty")}
+        for event in events
+    ]
+
+
+def _format_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            **run,
+            "status_key": _RUN_LABELS.get(
+                run.get("status") or "running", "common.status.error"
+            ),
+        }
+        for run in runs
+    ]
+
+
 def _overview_events(store: Store, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    names = {task["id"]: task["name"] for task in tasks}
-    events = []
-    for task in tasks:
-        for event in store.list_events(task["id"], limit=20):
-            events.append(
-                {
-                    **event,
-                    "task_name": names[task["id"]],
-                    "kind_key": _EVENT_LABELS.get(event["kind"], "common.empty"),
-                }
-            )
-    return sorted(events, key=lambda item: (item.get("at") or "", item["id"]), reverse=True)[:5]
+    if not tasks:
+        return []
+    return _format_events(recent_events(store, limit=5))
 
 
 def _overview_runs(store: Store, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    names = {task["id"]: task["name"] for task in tasks}
-    runs = []
-    for task in tasks:
-        for run in store.list_runs(task["id"], limit=20):
-            runs.append(
-                {
-                    **run,
-                    "task_name": names[task["id"]],
-                    "status_key": _RUN_LABELS.get(
-                        run.get("status") or "running", "common.status.error"
-                    ),
-                }
-            )
-    return sorted(runs, key=lambda item: (item.get("started_at") or "", item["id"]), reverse=True)[
-        :5
+    if not tasks:
+        return []
+    return _format_runs(recent_runs(store, limit=5))
+
+
+def _summaries_from_snapshot(
+    store: Store, snapshot: dict[str, Any], scheduler: object | None
+) -> list[dict[str, Any]]:
+    targets_by_task = snapshot["targets_by_task"]
+    latest_runs = snapshot["latest_runs"]
+    accesses = snapshot["accesses"]
+    instances = snapshot["instances"]
+    preserved_counts = snapshot["preserved_counts"]
+    return [
+        task_summary(
+            store,
+            task,
+            scheduler,
+            targets_rows=targets_by_task.get(int(task["id"]), []),
+            latest_run=latest_runs.get(int(task["id"])),
+            accesses=accesses,
+            instances=instances,
+            preserved_count=preserved_counts.get(int(task["id"]), 0),
+        )
+        for task in snapshot["tasks"]
     ]
 
 
 def _overview_context(request: Request, store: Store) -> dict[str, Any]:
     scheduler = request.app.state.scheduler
-    raw_tasks = store.list_tasks()
-    summaries = [task_summary(store, task, scheduler) for task in raw_tasks]
+    snapshot = store.overview_snapshot(include_feed=True, feed_limit=5)
+    summaries = _summaries_from_snapshot(store, snapshot, scheduler)
     attention = [
         row
         for row in summaries
@@ -353,8 +415,8 @@ def _overview_context(request: Request, store: Store) -> dict[str, Any]:
     return {
         "tasks": summaries[:10],
         "attention": attention[:10],
-        "events": _overview_events(store, raw_tasks),
-        "runs": _overview_runs(store, raw_tasks),
+        "events": _format_events(snapshot["recent_events"]),
+        "runs": _format_runs(snapshot["recent_runs"]),
         "stats": {
             "active": sum(1 for row in summaries if row["enabled"]),
             "disabled": sum(1 for row in summaries if not row["enabled"]),
@@ -381,9 +443,8 @@ def register(app: FastAPI) -> None:
         managed = str(query.get("managed", ""))
         backup = str(query.get("backup", ""))
         page = _parse_page(query.get("page"))
-        rows = [
-            task_summary(store, task, request.app.state.scheduler) for task in store.list_tasks()
-        ]
+        snapshot = store.overview_snapshot(include_feed=False)
+        rows = _summaries_from_snapshot(store, snapshot, request.app.state.scheduler)
         filtered = _filter_tasks(rows, search, status, managed, backup)
         total = len(filtered)
         pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
@@ -406,7 +467,9 @@ def register(app: FastAPI) -> None:
             selected_status=status,
             managed=managed,
             backup=backup,
-            managed_options=_access_options(store),
+            managed_options=_access_options(
+                store, accesses=snapshot["accesses"], instances=snapshot["instances"]
+            ),
         )
 
     return app

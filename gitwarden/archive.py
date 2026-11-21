@@ -32,22 +32,46 @@ class CaptureResult:
     events: list[Event] = field(default_factory=list)
 
 
+_ARCHIVE_CONFIG = {
+    "gc.auto": "0",
+    "core.fsync": "all",
+    "advice.nestedTag": "false",
+}
+
+
+def _ensure_archive_config(path: Path) -> None:
+    existing: dict[str, str] = {}
+    proc = run(path, "config", "--local", "--list", check=False)
+    if proc.returncode == 0:
+        for line in proc.stdout.splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                existing[key.strip().lower()] = value.strip()
+    for key, value in _ARCHIVE_CONFIG.items():
+        if existing.get(key.lower()) != value:
+            run(path, "config", key, value)
+
+
 def init_archive(path: Path) -> None:
-    if not path.exists():
-        run(None, "init", "--bare", str(path))
-    run(path, "config", "gc.auto", "0")
-    run(path, "config", "core.fsync", "all")
-    run(path, "config", "advice.nestedTag", "false")
+    with archive_lock(path):
+        if not (path / "HEAD").exists():
+            run(None, "init", "--bare", str(path))
+        _ensure_archive_config(path)
 
 
 @contextmanager
-def _locked(archive: Path) -> Iterator[None]:
+def archive_lock(archive: Path) -> Iterator[None]:
+    """获取单个档案仓的非阻塞独占锁；若已被持有则抛出 ArchiveBusy。"""
+    archive.mkdir(parents=True, exist_ok=True)
     with open(archive / "gitwarden.lock", "w") as fh:
         try:
             fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise ArchiveBusy(str(archive)) from None
         yield
+
+
+_locked = archive_lock
 
 
 def _read_refs(archive: Path, *prefixes: str) -> dict[str, str]:
@@ -160,7 +184,7 @@ def _commit_mirror(archive: Path, events: list[Event]) -> None:
 def capture(
     archive: Path, source_url: str, source_id: str, *, env: dict[str, str] | None = None
 ) -> CaptureResult:
-    with _locked(archive):
+    with archive_lock(archive):
         with telemetry_step("capture"):
             with telemetry_step("fetch"):
                 run(
