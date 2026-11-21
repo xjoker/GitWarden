@@ -1,6 +1,6 @@
+import asyncio
 import inspect
 import re
-import time
 from pathlib import Path
 
 import pytest
@@ -107,7 +107,11 @@ def test_icon_routes_take_no_parameters(client):
 
 def test_wrong_password_is_401_and_correct_password_logs_in(client, monkeypatch):
     slept = []
-    monkeypatch.setattr(time, "sleep", lambda s: slept.append(s))
+
+    async def fake_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
     resp = client.post("/login", data={"password": "nope"}, follow_redirects=False)
     assert resp.status_code == 401
     assert "Incorrect password" in resp.text

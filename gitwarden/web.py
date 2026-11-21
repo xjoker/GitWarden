@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
+import math
 import os
 import re
 import secrets
 import shutil
 import sqlite3
 import tempfile
+import threading
 import time
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections import OrderedDict, deque
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager, nullcontext
 from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
@@ -50,6 +54,20 @@ from gitwarden.target import DeleteGuard, TargetMismatch, TargetNotEmpty, config
 log = logging.getLogger("gitwarden")
 
 SESSION_COOKIE = "gw_session"
+SESSION_IDLE_TTL = 7200
+SESSION_ABSOLUTE_TTL = 43200
+SESSION_MAX_COUNT = 128
+_COOKIE_SECURE_TRUE = frozenset({"1", "true", "yes", "on"})
+SECURITY_HEADERS = {
+    "X-Frame-Options": "DENY",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "same-origin",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; object-src 'none'; base-uri 'self'; "
+        "form-action 'self'; frame-ancestors 'none'"
+    ),
+}
 TEMPLATES_DIR = Path(__file__).with_name("templates")
 STATIC_DIR = Path(__file__).with_name("static")
 # 浏览器图标：固定白名单，登录前即可访问，不经过会话校验。
@@ -170,13 +188,182 @@ def _store(request: Request) -> Store:
     return request.app.state.store
 
 
+class LoginRateLimiter:
+    """有界内存滑动窗口登录限流器（按客户端 IP + 全局上限）。"""
+
+    def __init__(
+        self,
+        *,
+        ip_limit: int = 10,
+        global_limit: int = 30,
+        window_seconds: float = 60.0,
+        max_ips: int = 1024,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.ip_limit = ip_limit
+        self.global_limit = global_limit
+        self.window_seconds = window_seconds
+        self.max_ips = max_ips
+        self.clock = clock
+        self._per_ip: OrderedDict[str, deque[float]] = OrderedDict()
+        self._global: deque[float] = deque()
+        self._lock = threading.Lock()
+
+    def allow(self, client_ip: str) -> tuple[bool, float]:
+        """检查当前请求是否允许尝试登录，返回 `(allowed, retry_after_seconds)`。"""
+        with self._lock:
+            now_ts = self.clock()
+            cutoff = now_ts - self.window_seconds
+            while self._global and self._global[0] <= cutoff:
+                self._global.popleft()
+
+            bucket = self._per_ip.get(client_ip)
+            if bucket is not None:
+                while bucket and bucket[0] <= cutoff:
+                    bucket.popleft()
+                if not bucket:
+                    del self._per_ip[client_ip]
+                    bucket = None
+
+            if len(self._global) >= self.global_limit:
+                retry_after = max(0.0, self._global[0] + self.window_seconds - now_ts)
+                return False, retry_after
+
+            if bucket is not None and len(bucket) >= self.ip_limit:
+                retry_after = max(0.0, bucket[0] + self.window_seconds - now_ts)
+                return False, retry_after
+
+            if bucket is None:
+                if len(self._per_ip) >= self.max_ips:
+                    stale = [
+                        ip for ip, dq in self._per_ip.items() if not dq or dq[-1] <= cutoff
+                    ]
+                    for ip in stale:
+                        del self._per_ip[ip]
+                    while len(self._per_ip) >= self.max_ips:
+                        self._per_ip.popitem(last=False)
+                bucket = deque()
+                self._per_ip[client_ip] = bucket
+            else:
+                self._per_ip.move_to_end(client_ip)
+
+            self._global.append(now_ts)
+            bucket.append(now_ts)
+            return True, 0.0
+
+    def reset(self) -> None:
+        with self._lock:
+            self._per_ip.clear()
+            self._global.clear()
+
+
+def _cookie_secure() -> bool:
+    return os.environ.get("GW_COOKIE_SECURE", "").strip().lower() in _COOKIE_SECURE_TRUE
+
+
+def _cleanup_stale_work(data_dir: Path) -> None:
+    """清理上次异常退出遗留的 work/ssh-* 与 work/bundle-* 临时目录或文件。"""
+    work_dir = data_dir / "work"
+    if not work_dir.is_dir():
+        return
+    try:
+        entries = list(work_dir.iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if not entry.name.startswith(("ssh-", "bundle-")):
+            continue
+        try:
+            if entry.is_symlink() or entry.is_file():
+                entry.unlink(missing_ok=True)
+            elif entry.is_dir():
+                shutil.rmtree(entry, ignore_errors=True)
+            else:
+                entry.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _session_clock(app: Any) -> float:
+    clock = getattr(app.state, "session_clock", time.monotonic)
+    return float(clock())
+
+
+def _session_lock(app: Any):
+    lock = getattr(app.state, "sessions_lock", None)
+    return lock if lock is not None else nullcontext()
+
+
+def _prune_sessions_locked(app: Any, now_ts: float) -> None:
+    sessions: dict[str, Any] | None = getattr(app.state, "sessions", None)
+    if not sessions:
+        return
+    idle_ttl = float(getattr(app.state, "session_idle_ttl", SESSION_IDLE_TTL))
+    abs_ttl = float(getattr(app.state, "session_absolute_ttl", SESSION_ABSOLUTE_TTL))
+    expired = [
+        tok
+        for tok, entry in list(sessions.items())
+        if isinstance(entry, dict)
+        and (
+            now_ts - float(entry.get("created_at", 0.0)) >= abs_ttl
+            or now_ts - float(entry.get("last_seen", 0.0)) >= idle_ttl
+        )
+    ]
+    for tok in expired:
+        sessions.pop(tok, None)
+
+
+def _prune_sessions(app: Any) -> None:
+    if getattr(app.state, "sessions", None) is None:
+        return
+    with _session_lock(app):
+        _prune_sessions_locked(app, _session_clock(app))
+
+
+def _create_session(app: Any, token: str, csrf: str) -> None:
+    sessions: dict[str, Any] = app.state.sessions
+    max_count = max(1, int(getattr(app.state, "session_max_count", SESSION_MAX_COUNT)))
+    with _session_lock(app):
+        now_ts = _session_clock(app)
+        _prune_sessions_locked(app, now_ts)
+        while len(sessions) >= max_count:
+            oldest = min(
+                sessions.items(),
+                key=lambda item: (
+                    (
+                        float(item[1].get("last_seen", 0.0)),
+                        float(item[1].get("created_at", 0.0)),
+                    )
+                    if isinstance(item[1], dict)
+                    else (0.0, 0.0)
+                ),
+            )[0]
+            sessions.pop(oldest, None)
+        sessions[token] = {"csrf": csrf, "created_at": now_ts, "last_seen": now_ts}
+
+
 def _session(request: Request) -> str:
     """校验登录会话，返回该会话的 CSRF 令牌。"""
     token = request.cookies.get(SESSION_COOKIE)
-    sessions: dict[str, str] = request.app.state.sessions
-    if token is None or token not in sessions:
+    sessions: dict[str, Any] = request.app.state.sessions
+    if token is None:
         raise _NotLoggedIn
-    return sessions[token]
+    with _session_lock(request.app):
+        entry = sessions.get(token)
+        if entry is None:
+            raise _NotLoggedIn
+        if isinstance(entry, str):
+            return entry
+        now_ts = _session_clock(request.app)
+        idle_ttl = float(getattr(request.app.state, "session_idle_ttl", SESSION_IDLE_TTL))
+        abs_ttl = float(getattr(request.app.state, "session_absolute_ttl", SESSION_ABSOLUTE_TTL))
+        created_at = float(entry.get("created_at", 0.0))
+        last_seen = float(entry.get("last_seen", 0.0))
+        if now_ts - created_at >= abs_ttl or now_ts - last_seen >= idle_ttl:
+            sessions.pop(token, None)
+            raise _NotLoggedIn
+        entry["last_seen"] = now_ts
+        return str(entry["csrf"])
 
 
 async def _verified(request: Request) -> str:
@@ -697,6 +884,7 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
             "UPDATE runs SET finished_at=?, status='failed', message=? WHERE finished_at IS NULL",
             (now(), msg("run.interrupted")),
         )
+        _cleanup_stale_work(config.data_dir)
         scheduler = Scheduler(
             store,
             config.data_dir,
@@ -724,15 +912,24 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
     )
     app.state.data_dir = config.data_dir
     app.state.sessions = {}
+    app.state.sessions_lock = threading.Lock()
+    app.state.session_idle_ttl = SESSION_IDLE_TTL
+    app.state.session_absolute_ttl = SESSION_ABSOLUTE_TTL
+    app.state.session_max_count = SESSION_MAX_COUNT
+    app.state.session_clock = time.monotonic
+    app.state.login_rate_limiter = LoginRateLimiter()
     app.state.version = _version()
 
     @app.middleware("http")
     async def record_post_activity(request: Request, call_next):
+        _prune_sessions(request.app)
         token = set_language(language_for_cookie(request.cookies.get(LANG_COOKIE)))
         status = 500
         try:
             response = await call_next(request)
             status = response.status_code
+            for header, value in SECURITY_HEADERS.items():
+                response.headers.setdefault(header, value)
             return response
         finally:
             if request.method == "POST" and request.url.path != "/lang":
@@ -742,13 +939,23 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
     @app.exception_handler(_NotLoggedIn)
     async def not_logged_in(request: Request, exc: _NotLoggedIn) -> Response:
         if request.method == "GET":
-            return RedirectResponse("/login", status_code=303)
-        return HTMLResponse(
-            translate(
-                "common.not_logged_in", language_for_cookie(request.cookies.get(LANG_COOKIE))
-            ),
-            status_code=401,
-        )
+            response: Response = RedirectResponse("/login", status_code=303)
+        else:
+            response = HTMLResponse(
+                translate(
+                    "common.not_logged_in", language_for_cookie(request.cookies.get(LANG_COOKIE))
+                ),
+                status_code=401,
+            )
+        if SESSION_COOKIE in request.cookies:
+            response.delete_cookie(
+                SESSION_COOKIE,
+                path="/",
+                httponly=True,
+                samesite="strict",
+                secure=_cookie_secure(),
+            )
+        return response
 
     @app.exception_handler(_CsrfError)
     async def csrf_failed(request: Request, exc: _CsrfError) -> Response:
@@ -794,29 +1001,57 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
         return response
 
     @app.post("/login")
-    def login(request: Request, password: Annotated[str, Form()] = ""):
+    async def login(request: Request, password: Annotated[str, Form()] = ""):
+        limiter: LoginRateLimiter = request.app.state.login_rate_limiter
+        client_ip = request.client.host if request.client else "unknown"
+        allowed, retry_after = limiter.allow(client_ip)
+        lang = language_for_cookie(request.cookies.get(LANG_COOKIE))
+        if not allowed:
+            response = _page(
+                request,
+                "login.html",
+                None,
+                status=429,
+                error=translate("login.rate_limited", lang),
+            )
+            response.headers["Retry-After"] = str(max(1, math.ceil(retry_after)))
+            return response
         if not hmac.compare_digest(password.encode(), config.admin_password.encode()):
-            time.sleep(1)
+            await asyncio.sleep(1)
             return _page(
                 request,
                 "login.html",
                 None,
                 status=401,
-                error=translate(
-                    "login.invalid_password", language_for_cookie(request.cookies.get(LANG_COOKIE))
-                ),
+                error=translate("login.invalid_password", lang),
             )
         token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
-        request.app.state.sessions[token] = csrf
+        _create_session(request.app, token, csrf)
         response = _redirect("/")
-        response.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="strict", path="/")
+        response.set_cookie(
+            SESSION_COOKIE,
+            token,
+            httponly=True,
+            samesite="strict",
+            secure=_cookie_secure(),
+            path="/",
+        )
         return response
 
     @app.post("/logout")
     def logout(request: Request, _csrf: VerifiedToken):
-        request.app.state.sessions.pop(request.cookies.get(SESSION_COOKIE), None)
+        sessions = request.app.state.sessions
+        token = request.cookies.get(SESSION_COOKIE)
+        with _session_lock(request.app):
+            sessions.pop(token, None)
         response = _redirect("/login")
-        response.delete_cookie(SESSION_COOKIE, path="/")
+        response.delete_cookie(
+            SESSION_COOKIE,
+            path="/",
+            httponly=True,
+            samesite="strict",
+            secure=_cookie_secure(),
+        )
         return response
 
     # 任务

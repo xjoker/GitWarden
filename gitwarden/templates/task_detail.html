@@ -32,7 +32,7 @@
     </div>
     <div class="actions">
       <form method="post" action="/tasks/{{ task['id'] }}/run" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">{{ t('common.action.run_now') }}</button></form>
-      <a class="btn secondary" href="#edit" onclick="document.getElementById('edit').querySelector('details').open=true">{{ t('task.edit') }}</a>
+      <a class="btn secondary" href="#edit">{{ t('task.edit') }}</a>
       <form method="post" action="/tasks/{{ task['id'] }}/detailed" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enabled" value="{{ 0 if task['detailed_logging'] else 1 }}"><button type="submit" class="secondary">{{ t('task.detailed_on') if not task['detailed_logging'] else t('task.detailed_off') }}</button></form>
       <form method="post" action="/tasks/{{ task['id'] }}/toggle" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="enabled" value="{{ 0 if task['enabled'] else 1 }}"><button type="submit" class="secondary">{{ t('task.disable') if task['enabled'] else t('task.enable') }}</button></form>
     </div>
@@ -41,7 +41,7 @@
   <section class="stack" aria-labelledby="targets">
     <div class="row" style="justify-content:space-between">
       <h2 id="targets">{{ t('task.targets') }}</h2>
-      <a class="btn secondary small" href="#add-target" onclick="document.getElementById('add-target').querySelector('details').open=true">{{ t('task.add_target') }}</a>
+      <a class="btn secondary small" href="#add-target">{{ t('task.add_target') }}</a>
     </div>
     <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(min(380px,100%),1fr))">
       {% for target in targets %}

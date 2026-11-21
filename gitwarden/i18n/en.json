@@ -48,6 +48,7 @@
   "login.password": "Administrator password",
   "login.submit": "Log in",
   "login.invalid_password": "Incorrect password",
+  "login.rate_limited": "Too many login attempts. Please wait and try again.",
   "login.language": "Language",
   "login.language_submit": "Change language",
   "error.task_missing": "Task not found",
