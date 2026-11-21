@@ -16,6 +16,7 @@ from gitwarden.git import execution_context, terminate_active_processes
 from gitwarden.runner import run_task
 
 _MAX_INTERVAL_MINUTES = 6 * 60
+_STOP_GRACE_SECONDS = 1.5
 _STOP_JOIN_SECONDS = 10
 
 
@@ -145,13 +146,18 @@ class Scheduler:
             self._condition.notify_all()
             coordinator = self._thread
             workers = list(self._worker_threads)
-        terminate_active_processes()
+        threads = [thread for thread in [coordinator, *workers] if thread is not None]
+        now = time.monotonic()
+        grace_deadline = now + _STOP_GRACE_SECONDS
+        deadline = now + _STOP_JOIN_SECONDS
+        for thread in threads:
+            thread.join(max(0.0, grace_deadline - time.monotonic()))
+        if any(thread.is_alive() for thread in threads):
+            terminate_active_processes()
         # worker 是 daemon 线程；档案写入为两阶段提交，被打断不会损坏，所以超时后直接返回。
-        deadline = time.monotonic() + _STOP_JOIN_SECONDS
-        for thread in [coordinator, *workers]:
-            if thread is None:
-                continue
-            thread.join(max(0.0, deadline - time.monotonic()))
+        for thread in threads:
+            if thread.is_alive():
+                thread.join(max(0.0, deadline - time.monotonic()))
             if thread.is_alive():
                 logging.getLogger("gitwarden").warning(
                     "停止调度器时 %s 仍在运行，已等待 %s 秒后放弃等待",

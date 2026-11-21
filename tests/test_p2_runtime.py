@@ -255,35 +255,37 @@ def test_terminate_active_processes_handles_disappeared_process_during_grace_wai
             _ACTIVE_PROCESSES.discard(fake_proc)
 
 
-def test_scheduler_stop_calls_terminate_active_processes_before_joining(
+def test_scheduler_stop_calls_terminate_active_processes_when_worker_still_alive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     store = Store(tmp_path / "data")
     scheduler = Scheduler(store, tmp_path / "data", tick_seconds=0.05, workers=1)
     events: list[str] = []
+    release = threading.Event()
 
+    monkeypatch.setattr("gitwarden.scheduler._STOP_GRACE_SECONDS", 0.05)
     monkeypatch.setattr(
         "gitwarden.scheduler.terminate_active_processes",
-        lambda: events.append("terminate") or 0,
+        lambda: (events.append("terminate"), release.set())[0] or 0,
     )
 
     scheduler.stop()
     assert events == []
 
     scheduler.start()
-    orig_thread = scheduler._thread
-    assert orig_thread is not None
-    orig_join = orig_thread.join
+    blocker = threading.Thread(target=lambda: release.wait(timeout=5), daemon=True)
+    blocker.start()
+    scheduler._worker_threads.append(blocker)
+    orig_join = blocker.join
 
     def spy_join(timeout: float | None = None) -> None:
         events.append("join")
         orig_join(timeout)
 
-    monkeypatch.setattr(orig_thread, "join", spy_join)
+    monkeypatch.setattr(blocker, "join", spy_join)
     scheduler.stop()
 
-    assert events[0] == "terminate"
-    assert "join" in events
+    assert events == ["join", "terminate", "join"]
 
 
 def test_scheduler_stop_terminates_blocked_git_without_waiting_stop_join_limit(
