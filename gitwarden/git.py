@@ -6,6 +6,7 @@ import os
 import selectors
 import signal
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
@@ -53,6 +54,8 @@ _DEFAULT_CONTEXT = _ExecutionContext()
 _execution_context: ContextVar[_ExecutionContext] = ContextVar(
     "git_execution_context", default=_DEFAULT_CONTEXT
 )
+_ACTIVE_PROCESSES_LOCK = threading.Lock()
+_ACTIVE_PROCESSES: set[subprocess.Popen[bytes]] = set()
 
 
 @contextmanager
@@ -107,13 +110,70 @@ def _command_args(args: tuple[str, ...]) -> tuple[list[str], str | None]:
     return values, command
 
 
-def _https_operation(args: tuple[str, ...], command: str | None) -> bool:
+def _http_operation(args: tuple[str, ...], command: str | None) -> bool:
     if command not in _NETWORK_COMMANDS:
         return False
-    return any(value.lower().startswith("https://") for value in args)
+    return any(value.lower().startswith(("http://", "https://")) for value in args)
+
+
+def _signal_process_group(proc: subprocess.Popen[bytes], *, force: bool = False) -> bool:
+    if os.name == "nt":
+        try:
+            if force:
+                proc.kill()
+            else:
+                proc.terminate()
+            return True
+        except OSError:
+            return False
+    sig = signal.SIGKILL if force else signal.SIGTERM
+    try:
+        os.killpg(proc.pid, sig)
+        return True
+    except (ProcessLookupError, OSError):
+        return False
+
+
+def terminate_active_processes(grace_seconds: float = 2.0) -> int:
+    """向当前所有活跃 git 进程组发送 SIGTERM，超时未退出则升级为 SIGKILL。"""
+
+    signaled: list[subprocess.Popen[bytes]] = []
+    with _ACTIVE_PROCESSES_LOCK:
+        for proc in list(_ACTIVE_PROCESSES):
+            if proc.poll() is not None:
+                continue
+            if _signal_process_group(proc, force=False):
+                signaled.append(proc)
+    if not signaled:
+        return 0
+
+    deadline = time.monotonic() + max(0.0, grace_seconds)
+    remaining = signaled
+    while True:
+        with _ACTIVE_PROCESSES_LOCK:
+            remaining = [
+                proc
+                for proc in remaining
+                if proc in _ACTIVE_PROCESSES and proc.poll() is None
+            ]
+        if not remaining:
+            break
+        timeout = deadline - time.monotonic()
+        if timeout <= 0:
+            break
+        time.sleep(min(0.05, timeout))
+
+    if remaining:
+        with _ACTIVE_PROCESSES_LOCK:
+            for proc in remaining:
+                if proc in _ACTIVE_PROCESSES and proc.poll() is None:
+                    _signal_process_group(proc, force=True)
+    return len(signaled)
 
 
 def _terminate_process_group(proc: subprocess.Popen[bytes]) -> None:
+    with _ACTIVE_PROCESSES_LOCK:
+        _ACTIVE_PROCESSES.discard(proc)
     if os.name == "nt":
         proc.kill()
     else:
@@ -144,27 +204,30 @@ def _run_streamed(
         bufsize=0,
         start_new_session=os.name != "nt",
     )
-    if proc.stdin is not None:
-        try:
-            if input is not None:
-                proc.stdin.write(input.encode())
-            proc.stdin.close()
-        except BrokenPipeError:
-            proc.stdin.close()
-
-    selector = selectors.DefaultSelector()
-    streams: dict[object, str] = {}
-    if proc.stdout is not None:
-        selector.register(proc.stdout, selectors.EVENT_READ, "stdout")
-        streams[proc.stdout] = "stdout"
-    if proc.stderr is not None:
-        selector.register(proc.stderr, selectors.EVENT_READ, "stderr")
-        streams[proc.stderr] = "stderr"
+    with _ACTIVE_PROCESSES_LOCK:
+        _ACTIVE_PROCESSES.add(proc)
+    selector: selectors.DefaultSelector | None = None
     output: dict[str, list[bytes]] = {"stdout": [], "stderr": []}
-    last_output = time.monotonic()
-    stall_seconds = context.stall_minutes * 60 if command in _NETWORK_COMMANDS else None
-
     try:
+        if proc.stdin is not None:
+            try:
+                if input is not None:
+                    proc.stdin.write(input.encode())
+                proc.stdin.close()
+            except BrokenPipeError:
+                proc.stdin.close()
+
+        selector = selectors.DefaultSelector()
+        streams: dict[object, str] = {}
+        if proc.stdout is not None:
+            selector.register(proc.stdout, selectors.EVENT_READ, "stdout")
+            streams[proc.stdout] = "stdout"
+        if proc.stderr is not None:
+            selector.register(proc.stderr, selectors.EVENT_READ, "stderr")
+            streams[proc.stderr] = "stderr"
+        last_output = time.monotonic()
+        stall_seconds = context.stall_minutes * 60 if command in _NETWORK_COMMANDS else None
+
         while streams or proc.poll() is None:
             timeout = 0.1
             if stall_seconds is not None:
@@ -198,11 +261,16 @@ def _run_streamed(
                 if kind == "stderr" and context.on_output is not None:
                     context.on_output(chunk.decode(errors="replace"))
     finally:
-        selector.close()
+        if selector is not None:
+            selector.close()
+        with _ACTIVE_PROCESSES_LOCK:
+            _ACTIVE_PROCESSES.discard(proc)
         if proc.poll() is None:
             _terminate_process_group(proc)
+        else:
+            proc.wait()
 
-    returncode = proc.wait()
+    returncode = proc.returncode if proc.returncode is not None else proc.wait()
     result = subprocess.CompletedProcess(
         cmd,
         returncode,
@@ -242,7 +310,7 @@ def run(
     if repo is not None:
         cmd += ["-C", str(repo)]
     cmd += ["-c", "protocol.ext.allow=never"]
-    if _https_operation(original_args, command):
+    if _http_operation(original_args, command):
         cmd += ["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=600"]
     cmd += command_args
     full_env = _child_env(env)

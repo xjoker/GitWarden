@@ -12,7 +12,7 @@ from typing import Any
 
 from gitwarden.db import Store
 from gitwarden.discovery import discover
-from gitwarden.git import execution_context
+from gitwarden.git import execution_context, terminate_active_processes
 from gitwarden.runner import run_task
 
 _MAX_INTERVAL_MINUTES = 6 * 60
@@ -145,6 +145,7 @@ class Scheduler:
             self._condition.notify_all()
             coordinator = self._thread
             workers = list(self._worker_threads)
+        terminate_active_processes()
         # worker 是 daemon 线程；档案写入为两阶段提交，被打断不会损坏，所以超时后直接返回。
         deadline = time.monotonic() + _STOP_JOIN_SECONDS
         for thread in [coordinator, *workers]:
