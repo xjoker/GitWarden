@@ -3,12 +3,73 @@
 from __future__ import annotations
 
 import time
+from collections import deque
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from gitwarden.i18n import msg
+
+MAX_TAIL_BYTES = 128 * 1024
+_CHUNK_SLICE_BYTES = 4096
+
+
+class TailBuffer:
+    """Bounded UTF-8 byte tail buffer with O(1) amortized appends."""
+
+    def __init__(self, max_bytes: int = MAX_TAIL_BYTES) -> None:
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        self.max_bytes = max_bytes
+        self._chunks: deque[bytes] = deque()
+        self._size = 0
+        self.truncated = False
+
+    def append(self, text: str) -> None:
+        if not text:
+            return
+        data = text.encode("utf-8")
+        if len(data) >= self.max_bytes:
+            if len(data) > self.max_bytes or self._size > 0:
+                self.truncated = True
+            self._chunks.clear()
+            data = data[-self.max_bytes :]
+            self._size = len(data)
+            for offset in range(0, len(data), _CHUNK_SLICE_BYTES):
+                self._chunks.append(data[offset : offset + _CHUNK_SLICE_BYTES])
+            return
+        if len(data) > _CHUNK_SLICE_BYTES:
+            for offset in range(0, len(data), _CHUNK_SLICE_BYTES):
+                self._chunks.append(data[offset : offset + _CHUNK_SLICE_BYTES])
+        else:
+            self._chunks.append(data)
+        self._size += len(data)
+        while self._size > self.max_bytes and len(self._chunks) > 1:
+            if self._size - len(self._chunks[0]) < self.max_bytes:
+                break
+            removed = self._chunks.popleft()
+            self._size -= len(removed)
+            self.truncated = True
+
+    def __bool__(self) -> bool:
+        return self._size > 0
+
+    def text(self) -> str:
+        if not self._chunks:
+            return ""
+        raw = b"".join(self._chunks)
+        if len(raw) > self.max_bytes:
+            self.truncated = True
+            raw = raw[-self.max_bytes :]
+        if self.truncated:
+            # Drop leading UTF-8 continuation bytes left by byte-level slicing.
+            idx = 0
+            while idx < len(raw) and (raw[idx] & 0xC0) == 0x80:
+                idx += 1
+            if idx:
+                raw = raw[idx:]
+        return raw.decode("utf-8", errors="replace")
 
 
 @dataclass
@@ -17,23 +78,25 @@ class StepRecord:
     duration_ms: int = 0
     failed: bool = False
     error_message: str | None = None
-    _parts: list[str] = field(default_factory=list)
+    _buffer: TailBuffer = field(default_factory=TailBuffer)
 
     @property
     def raw(self) -> str:
-        return "".join(self._parts)
+        return self._buffer.text()
 
     def add_output(self, text: str) -> None:
         if text:
-            self._parts.append(text)
+            self._buffer.append(text)
 
     def add_command_output(self, text: str) -> None:
         if not text:
             return
         current = self.raw
-        if current.endswith(text) or text in current[-len(text) :]:
+        if current and (
+            current.endswith(text) or (self._buffer.truncated and text.endswith(current))
+        ):
             return
-        self._parts.append(text)
+        self._buffer.append(text)
 
 
 _stack: ContextVar[tuple[StepRecord, ...]] = ContextVar("gitwarden_telemetry_stack", default=())

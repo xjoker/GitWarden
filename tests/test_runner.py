@@ -293,8 +293,17 @@ def test_maintenance_preserves_refs_and_objects_and_runs_at_most_weekly(env, mon
     real_run = runner.run
 
     def observed_run(path, *args, **kwargs):
-        if args[:1] == ("gc",):
-            assert args == ("gc", "--no-prune")
+        if "gc" in args:
+            assert args == (
+                "-c",
+                "pack.threads=1",
+                "-c",
+                "pack.windowMemory=128m",
+                "-c",
+                "pack.packSizeLimit=256m",
+                "gc",
+                "--no-prune",
+            )
             with pytest.raises(ArchiveBusy):
                 with _locked(archive):
                     pass
@@ -324,7 +333,7 @@ def test_maintenance_failure_is_a_warning_and_does_not_fail_the_run(env, monkeyp
     real_run = runner.run
 
     def fail_gc(path, *args, **kwargs):
-        if args[:1] == ("gc",):
+        if "gc" in args:
             raise GitError(list(args), 1, "maintenance fixture failure")
         return real_run(path, *args, **kwargs)
 

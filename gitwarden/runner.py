@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -246,11 +246,31 @@ def _archive_size(archive: Path) -> int:
     return total
 
 
+def _tail_from_sequence(parts: Sequence[str], max_bytes: int = telemetry.MAX_TAIL_BYTES) -> str:
+    buf = telemetry.TailBuffer(max_bytes=max_bytes)
+    selected: list[str] = []
+    total = 0
+    for chunk in reversed(parts):
+        if not chunk:
+            continue
+        selected.append(chunk)
+        total += len(chunk.encode("utf-8"))
+        if total >= max_bytes:
+            break
+    for chunk in reversed(selected):
+        buf.append(chunk)
+    return buf.text()
+
+
 def _progress_text(
-    store: Store, parts: list[str], archive: Path, initial_backup: bool
+    store: Store,
+    parts: telemetry.TailBuffer | Sequence[str],
+    archive: Path,
+    initial_backup: bool,
 ) -> str | None:
-    if parts:
-        text = logs.redact_text(store, "".join(parts)) or ""
+    raw = parts.text() if isinstance(parts, telemetry.TailBuffer) else _tail_from_sequence(parts)
+    if raw:
+        text = logs.redact_text(store, raw) or ""
         # 进度只看最新一行，保留末尾；16000 字符在 UTF-8 下不超过 64KB 上限。
         return text[-16000:]
     if initial_backup:
@@ -395,7 +415,17 @@ def _maintain_archive(store: Store, run_id: int, archive: Path) -> None:
             marker = archive / "gitwarden-maintenance"
             if marker.exists() and time.time() - marker.stat().st_mtime < 7 * 86400:
                 return
-            run(archive, "gc", "--no-prune")
+            run(
+                archive,
+                "-c",
+                "pack.threads=1",
+                "-c",
+                "pack.windowMemory=128m",
+                "-c",
+                "pack.packSizeLimit=256m",
+                "gc",
+                "--no-prune",
+            )
             marker.touch()
     except Exception as exc:
         logs.add_step(store, run_id, "maintenance", str(exc), level="warn")
@@ -411,7 +441,7 @@ def run_task(store: Store, data_dir: Path, task_id: int) -> bool | None:
     initial_backup = not _has_mirror_refs(archive)
     run_id = store.start_run(task_id, initial_backup=initial_backup)
     detailed = bool(task["detailed_logging"])
-    progress_parts: list[str] = []
+    progress_buffer = telemetry.TailBuffer()
     message = None
     status = "failed"
     captured = False
@@ -419,11 +449,11 @@ def run_task(store: Store, data_dir: Path, task_id: int) -> bool | None:
 
     def progress(text: str) -> None:
         nonlocal last_progress
-        progress_parts.append(text)
+        progress_buffer.append(text)
         if time.monotonic() - last_progress >= 1:
             store._exec(
                 "UPDATE runs SET progress=? WHERE id=?",
-                (_progress_text(store, progress_parts, archive, initial_backup), run_id),
+                (_progress_text(store, progress_buffer, archive, initial_backup), run_id),
             )
             last_progress = time.monotonic()
 
@@ -440,8 +470,8 @@ def run_task(store: Store, data_dir: Path, task_id: int) -> bool | None:
         log.error("任务 %s 失败: %s", task["name"], message)
     if captured is not None:
         _maintain_archive(store, run_id, archive)
-    progress = _progress_text(store, progress_parts, archive, initial_backup)
-    store.finish_run(run_id, status, message, progress=progress)
+    progress_summary = _progress_text(store, progress_buffer, archive, initial_backup)
+    store.finish_run(run_id, status, message, progress=progress_summary)
     store.finish_task(task_id, status)
     return captured
 

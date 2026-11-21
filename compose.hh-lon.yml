@@ -1,0 +1,46 @@
+# Production Docker Compose configuration for hh-lon (2 vCPU / 8 GiB RAM, 48 GB root SSD, 6.4 TB /data HDD).
+#
+# Host preparation (run once before `docker compose -f compose.hh-lon.yml up -d`):
+#   install -d -m 0700 -o 10001 -g 10001 /data/gitwarden
+#
+# The container runs as UID/GID 10001:10001 (non-root user `gitwarden`), so /data/gitwarden
+# MUST be owned by 10001:10001 with mode 0700 and reside on the 6.4 TB /data HDD (never on
+# the 48 GB root SSD via a named Docker volume).
+#
+# Backup note (e.g., Kopia): exclude /data/gitwarden/work/ and snapshot SQLite databases
+# consistently via `sqlite3 ... ".backup ..."` rather than copying live WAL files.
+
+services:
+  gitwarden:
+    image: ${GW_IMAGE:-gitwarden:local}
+    build:
+      context: .
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-unknown}
+    env_file: .env
+    environment:
+      GW_PORT: "8080"
+      GW_WORKERS: "1"
+      GW_COOKIE_SECURE: "1"
+    volumes:
+      # Persistent bare archives and SQLite DB on /data HDD (10001:10001, 0700).
+      - /data/gitwarden:/data
+    ports:
+      # Loopback only; expose externally via local reverse proxy (e.g., OpenResty HTTPS).
+      - "127.0.0.1:${GW_PORT:-8080}:8080"
+    mem_limit: 1g
+    cpus: "1.0"
+    pids_limit: 256
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges=true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

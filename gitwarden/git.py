@@ -218,6 +218,15 @@ def _run_streamed(
     return result
 
 
+def _child_env(env: Mapping[str, str] | None) -> dict[str, str]:
+    # Strip GW_* variables (notably GW_ADMIN_PASSWORD) so git/ssh/askpass subprocesses
+    # never inherit application secrets from the parent process environment.
+    base = {k: v for k, v in os.environ.items() if not k.startswith("GW_")}
+    full_env = {**base, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C", **(env or {})}
+    full_env.pop("GW_ADMIN_PASSWORD", None)
+    return full_env
+
+
 def run(
     repo: Path | None,
     *args: str,
@@ -236,7 +245,7 @@ def run(
     if _https_operation(original_args, command):
         cmd += ["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=600"]
     cmd += command_args
-    full_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C", **(env or {})}
+    full_env = _child_env(env)
     proc = _run_streamed(
         cmd,
         input=input,

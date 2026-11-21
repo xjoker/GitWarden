@@ -8,6 +8,7 @@ import uuid
 from contextlib import closing
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 from gitwarden.creds import check_url
 from gitwarden.db import Store, now
@@ -51,7 +52,16 @@ def _merged_access(access: dict[str, Any], draft_settings: dict[str, Any] | None
     return merged
 
 
-def _repo_fields(repo: dict[str, Any]) -> tuple[Any, str, str]:
+def _instance_hostname(instance: dict[str, Any]) -> str:
+    host = urlsplit(instance["base_url"]).hostname
+    if not host:
+        raise ValueError("平台实例缺少有效主机名")
+    return host.lower()
+
+
+def _repo_fields(
+    repo: dict[str, Any], *, expected_host: str | None = None
+) -> tuple[Any, str, str]:
     if not isinstance(repo, dict):
         raise ValueError("平台仓库响应不是对象")
     repo_id = repo.get("id")
@@ -62,6 +72,20 @@ def _repo_fields(repo: dict[str, Any]) -> tuple[Any, str, str]:
     if not isinstance(clone_url, str) or not clone_url:
         raise ValueError(f"平台仓库 {full_name} 缺少 clone_url")
     check_url(clone_url)
+    if clone_url.startswith("/"):
+        raise ValueError(f"平台仓库 {full_name} 的 clone_url 不允许使用本地路径: {clone_url!r}")
+    parts = urlsplit(clone_url)
+    scheme = parts.scheme.lower()
+    if scheme not in ("http", "https", "ssh"):
+        raise ValueError(f"平台仓库 {full_name} 的 clone_url 协议不受支持: {clone_url!r}")
+    clone_host = (parts.hostname or "").lower()
+    if not clone_host:
+        raise ValueError(f"平台仓库 {full_name} 的 clone_url 缺少主机名: {clone_url!r}")
+    if expected_host is not None and clone_host != expected_host.lower():
+        raise ValueError(
+            f"平台仓库 {full_name} 的 clone_url 主机 {clone_host!r} "
+            f"与实例主机 {expected_host!r} 不匹配"
+        )
     return repo_id, full_name, clone_url
 
 
@@ -116,9 +140,10 @@ def _plan(
         if task["instance_id"] == instance["id"] and task["platform_repo_id"] is not None
     }
     known_urls = {task["source_url"] for task in tasks}
+    expected_host = _instance_hostname(instance)
     seen_ids: set[Any] = set()
     for repo in repos:
-        repo_id, full_name, clone_url = _repo_fields(repo)
+        repo_id, full_name, clone_url = _repo_fields(repo, expected_host=expected_host)
         if repo_id in seen_ids:
             continue
         seen_ids.add(repo_id)
