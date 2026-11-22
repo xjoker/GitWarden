@@ -234,9 +234,7 @@ class LoginRateLimiter:
 
             if bucket is None:
                 if len(self._per_ip) >= self.max_ips:
-                    stale = [
-                        ip for ip, dq in self._per_ip.items() if not dq or dq[-1] <= cutoff
-                    ]
+                    stale = [ip for ip, dq in self._per_ip.items() if not dq or dq[-1] <= cutoff]
                     for ip in stale:
                         del self._per_ip[ip]
                     while len(self._per_ip) >= self.max_ips:

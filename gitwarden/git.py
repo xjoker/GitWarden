@@ -152,9 +152,7 @@ def terminate_active_processes(grace_seconds: float = 2.0) -> int:
     while True:
         with _ACTIVE_PROCESSES_LOCK:
             remaining = [
-                proc
-                for proc in remaining
-                if proc in _ACTIVE_PROCESSES and proc.poll() is None
+                proc for proc in remaining if proc in _ACTIVE_PROCESSES and proc.poll() is None
             ]
         if not remaining:
             break

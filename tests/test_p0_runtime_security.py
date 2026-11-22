@@ -205,11 +205,7 @@ def test_git_child_env_strips_gw_secrets_and_preserves_standard_vars(
     repo = tmp_path / "repo.git"
     run(None, "init", "--bare", str(repo))
     probe = tmp_path / "probe-upload-pack"
-    probe.write_text(
-        "#!/bin/sh\n"
-        f"env > {shlex.quote(str(dump))}\n"
-        "exit 1\n"
-    )
+    probe.write_text(f"#!/bin/sh\nenv > {shlex.quote(str(dump))}\nexit 1\n")
     probe.chmod(0o755)
     run(None, "ls-remote", f"--upload-pack={probe}", f"file://{repo}", check=False)
     dumped = dump.read_text(encoding="utf-8")

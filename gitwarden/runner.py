@@ -409,9 +409,7 @@ def _execute(
     return "ok", None
 
 
-def _execution_context(
-    progress: Callable[[str], None], *, stall_minutes: float | None = None
-):
+def _execution_context(progress: Callable[[str], None], *, stall_minutes: float | None = None):
     def observer(args: list[str], proc: object, _duration_ms: int) -> None:
         telemetry.command_output(proc, args)
 
@@ -419,9 +417,7 @@ def _execution_context(
         telemetry.output(text)
         progress(text)
 
-    return execution_context(
-        stall_minutes=stall_minutes, observer=observer, on_output=on_output
-    )
+    return execution_context(stall_minutes=stall_minutes, observer=observer, on_output=on_output)
 
 
 def _maintain_archive(store: Store, run_id: int, archive: Path) -> None:

@@ -647,6 +647,7 @@ class Store:
     ) -> dict[str, Any]:
         """在单个 SQLite 连接内批量获取总览与任务列表所需的全部数据。"""
         with closing(self._connect()) as conn:
+
             def fetch_all(sql: str, args: tuple = ()) -> list[dict[str, Any]]:
                 return [_decode_row(dict(row)) for row in conn.execute(sql, args)]
 

@@ -236,9 +236,7 @@ def task_summary(
             extension_kind = "duration"
 
     preserved = (
-        store.count_preserved_events(task["id"])
-        if preserved_count is None
-        else preserved_count
+        store.count_preserved_events(task["id"]) if preserved_count is None else preserved_count
     )
     return {
         **task,
@@ -348,8 +346,7 @@ def _access_options(
 
 def _format_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
-        {**event, "kind_key": _EVENT_LABELS.get(event["kind"], "common.empty")}
-        for event in events
+        {**event, "kind_key": _EVENT_LABELS.get(event["kind"], "common.empty")} for event in events
     ]
 
 
@@ -357,9 +354,7 @@ def _format_runs(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {
             **run,
-            "status_key": _RUN_LABELS.get(
-                run.get("status") or "running", "common.status.error"
-            ),
+            "status_key": _RUN_LABELS.get(run.get("status") or "running", "common.status.error"),
         }
         for run in runs
     ]

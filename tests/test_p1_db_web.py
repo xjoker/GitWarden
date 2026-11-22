@@ -240,7 +240,9 @@ def test_overview_status_does_not_mislabel_healthy_or_partial_targets_as_source_
 
     # Case 1: Recovered task + ok target -> healthy
     t_ok = store.add_task("recovered", "https://source.example/ok.git")
-    targ_ok = store.add_target(t_ok, "nas-ok", "https://b.example/m1.git", "https://b.example/h1.git")
+    targ_ok = store.add_target(
+        t_ok, "nas-ok", "https://b.example/m1.git", "https://b.example/h1.git"
+    )
     store.set_bound(targ_ok, True)
     store.set_target_status(targ_ok, "ok", "Sync completed")
     store.finish_task(t_ok, "ok")
@@ -251,8 +253,12 @@ def test_overview_status_does_not_mislabel_healthy_or_partial_targets_as_source_
 
     # Case 2: Partial task (one ok target, one failed target) -> needs_attention, ok stays healthy
     t_part = store.add_task("partial-task", "https://source.example/part.git")
-    targ_a = store.add_target(t_part, "nas-a", "https://b.example/ma.git", "https://b.example/ha.git")
-    targ_b = store.add_target(t_part, "nas-b", "https://b.example/mb.git", "https://b.example/hb.git")
+    targ_a = store.add_target(
+        t_part, "nas-a", "https://b.example/ma.git", "https://b.example/ha.git"
+    )
+    targ_b = store.add_target(
+        t_part, "nas-b", "https://b.example/mb.git", "https://b.example/hb.git"
+    )
     store.set_bound(targ_a, True)
     store.set_bound(targ_b, True)
     store.set_target_status(targ_a, "ok", "Sync completed")
@@ -268,7 +274,9 @@ def test_overview_status_does_not_mislabel_healthy_or_partial_targets_as_source_
 
     # Case 3: Genuine source failure -> failing & source_failing
     t_fail = store.add_task("source-fail", "https://source.example/fail.git")
-    targ_f = store.add_target(t_fail, "nas-f", "https://b.example/mf.git", "https://b.example/hf.git")
+    targ_f = store.add_target(
+        t_fail, "nas-f", "https://b.example/mf.git", "https://b.example/hf.git"
+    )
     store.set_bound(targ_f, True)
     store.set_target_status(targ_f, "ok", "Sync completed")
     store.finish_task(t_fail, "failed")
@@ -322,18 +330,21 @@ def test_web_git_operations_propagate_config_stall_minutes(client, config, monke
 
     csrf = csrf_of(client, f"/tasks/{task_id}")
     assert (
-        client.post(f"/targets/{target_id}/retry", data={"csrf": csrf}, follow_redirects=False)
-        .status_code
+        client.post(
+            f"/targets/{target_id}/retry", data={"csrf": csrf}, follow_redirects=False
+        ).status_code
         == 303
     )
     assert (
-        client.post(f"/targets/{target_id}/audit", data={"csrf": csrf}, follow_redirects=False)
-        .status_code
+        client.post(
+            f"/targets/{target_id}/audit", data={"csrf": csrf}, follow_redirects=False
+        ).status_code
         == 303
     )
     assert (
-        client.post(f"/targets/{target_id}/bind", data={"csrf": csrf}, follow_redirects=False)
-        .status_code
+        client.post(
+            f"/targets/{target_id}/bind", data={"csrf": csrf}, follow_redirects=False
+        ).status_code
         == 303
     )
     assert (

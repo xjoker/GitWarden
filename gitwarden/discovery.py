@@ -59,9 +59,7 @@ def _instance_hostname(instance: dict[str, Any]) -> str:
     return host.lower()
 
 
-def _repo_fields(
-    repo: dict[str, Any], *, expected_host: str | None = None
-) -> tuple[Any, str, str]:
+def _repo_fields(repo: dict[str, Any], *, expected_host: str | None = None) -> tuple[Any, str, str]:
     if not isinstance(repo, dict):
         raise ValueError("平台仓库响应不是对象")
     repo_id = repo.get("id")

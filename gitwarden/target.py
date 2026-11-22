@@ -274,9 +274,7 @@ def push_target(
 
             if confirmed:
                 preserved_objs = _preserved_objects(archive)
-                confirmed_objects = {
-                    preserved_objs[u] for u in confirmed if u in preserved_objs
-                }
+                confirmed_objects = {preserved_objs[u] for u in confirmed if u in preserved_objs}
             else:
                 confirmed_objects = set()
         _reconcile_main(archive, target, confirmed_objects, confirmed, result, env, guard)
