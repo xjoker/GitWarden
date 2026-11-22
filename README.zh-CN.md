@@ -8,9 +8,9 @@ GitWarden 是一个自托管的 Git 历史镜像工具。它按计划把来源�
 
 [English](README.md) · 简体中文
 
-![终端演示：历史仓离线时来源被强推，主镜像整体暂停更新，旧 commit 仍被保全](docs/demo.gif)
+![GitWarden 演示：添加仓库；来源被强推时先保全旧版本再更新主镜像；把保全事件下载为 Git bundle](docs/demo.gif)
 
-*演示（约 50 秒，使用本地裸仓库，终端界面为英文）：GitWarden 先完成一次镜像；随后历史仓拒绝推送，来源对 `main` 执行 force push、对 `dev` 正常快进。安全门禁让整个主镜像暂停更新（两个分支都不推送），旧的 `main` commit 以 `refs/preserved/<ULID>` 留在本地档案；历史仓恢复后，先确认保全标签，再让主镜像追上来源。录屏中的 `gwctl` 是演示用的辅助脚本，提交的是与备份向导和 **Run now** 按钮相同的 WebUI 表单；GitWarden 本身不提供 CLI。*
+*演示（约 1 分钟，WebUI 界面与字幕为英文，无声音）：在备份向导中添加仓库。来源 force push、删除分支或改写标签时，GitWarden 先保全旧版本并在历史仓中确认，然后才更新主镜像。来源被删除或转为私有时，已保存的内容不受影响，任务显示 **Failing** 并持续重试；历史仓没能确认旧版本时，主镜像先不更新，运行日志会说明原因。审计会标出缺失或被改动的记录；每个保全事件都可以下载为 Git bundle，用普通 Git 即可恢复。*
 
 ![GitWarden 总览](docs/images/overview.jpg)
 
