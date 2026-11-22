@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 20261122.1 — 2026-11-22
+
+Production hardening for constrained hosts, dual-mode HTTPS/HTTP authentication, sync/SQLite performance optimizations, and WebUI fixes.
+
+- Add production `compose.hh-lon.yml` template binding `/data/gitwarden:/data` and dedicated scratch directory `/data/gitwarden-work:/work` (`GW_WORK_DIR=/work`), loopback-by-default dual-mode port binding (`GW_BIND_ADDR`), resource caps (`mem_limit`, `cpus`, `pids_limit`, bounded `/tmp` tmpfs), and `GW_WORKERS=1`.
+- Bound `git gc --no-prune` memory and threads (`pack.threads=1`, `pack.windowMemory=128m`, `pack.packSizeLimit=256m`) and cap git stderr/progress buffers at 128 KiB to eliminate unbounded memory growth and quadratic string joins.
+- Harden WebUI authentication: async `POST /login` with bounded sliding-window rate limiting (HTTP 429), idle/absolute session TTLs and capacity cap, `GW_COOKIE_SECURE` (`1`/`0`/`auto` supporting intranet HTTP + reverse-proxy HTTPS), strict security headers (`script-src 'none'` CSP, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`), and startup cleanup of stale `ssh-*`/`bundle-*` work directories.
+- Strip `GW_ADMIN_PASSWORD` and `GW_*` env vars from git subprocesses, move SSH temp key files to `tempfile.gettempdir()`, harden `check_url()` against control/whitespace characters and leading-dash SCP specs, and restrict platform discovery `clone_url` to matching host and non-local schemes.
+- Optimize sync and database paths: single `for-each-ref` lookup, reuse `ls-remote` results, batch large `git push` calls (150 refs/batch), add SQLite secondary indexes and aggregate/point queries for overview and bundle lookup, include unexpected remote `gw/*` tags (`report.unknown`) in `audit_alert`, lock `init_archive()`/`event_bundle`, recompute `task.last_status` on `retry_target()`, guard `_list_hooks()` pagination, propagate `stall_minutes` to WebUI git routes, and enforce credential required-field validation.
+- Fix WebUI defects and polish: platform instance delete confirmation, preserve access preview/save drafts and `?access_id=`, pure-CSS `:has()` wizard step 2 mode toggle and orphan task rollback on step 3 provisioning failure, full instance + access names in task detail provisioning dropdown, read-only source fields for platform-managed tasks, overview attention filtering and alert pill colors, SCP `clone_dir` fix, graceful termination of active git process groups on scheduler shutdown, and `http.lowSpeedLimit` coverage for `http://`.
+
 ## 20261020.1 — 2026-10-20
 
 Healthcheck follows the real listen address, warn when listening on all interfaces, tighten host validation, and small follow-ups from #10 / #13 / #14 reviews.
