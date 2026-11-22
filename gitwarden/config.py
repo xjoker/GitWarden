@@ -32,6 +32,14 @@ class Config:
     delete_guard: bool = True
     delete_guard_ratio: float = 0.5
     delete_guard_min_refs: int = 3
+    work_dir: Path | None = None
+
+
+def effective_work_dir(data_dir: Path, work_dir: Path | None = None) -> Path:
+    if work_dir is not None:
+        return work_dir
+    raw = os.environ.get("GW_WORK_DIR", "").strip()
+    return Path(raw) if raw else data_dir / "work"
 
 
 def _read_toml(path: Path) -> dict:
@@ -209,6 +217,8 @@ def _validate(config: Config) -> Config:
 def load_config(env: Mapping[str, str] | None = None) -> Config:
     env = os.environ if env is None else env
     data_dir = Path(env.get("GW_DATA_DIR") or "./data")
+    raw_work_dir = (env.get("GW_WORK_DIR") or "").strip()
+    work_dir = Path(raw_work_dir) if raw_work_dir else None
     config_path = Path(env.get("GW_CONFIG") or data_dir / "config" / "gitwarden.toml")
     toml = _read_toml(config_path)
     server = toml.get("server", {})
@@ -276,5 +286,6 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
             delete_guard=guard,
             delete_guard_ratio=guard_ratio,
             delete_guard_min_refs=guard_min,
+            work_dir=work_dir,
         )
     )

@@ -11,6 +11,7 @@ from typing import Any
 
 from gitwarden import logs, telemetry
 from gitwarden.archive import ArchiveBusy, archive_lock, capture, init_archive
+from gitwarden.config import effective_work_dir
 from gitwarden.creds import git_env
 from gitwarden.db import Store, now
 from gitwarden.external import scan_external
@@ -42,7 +43,7 @@ def bind_target(store: Store, data_dir: Path, target_id: int) -> None:
     task = store.get_task(row["task_id"])
     archive = archive_path(data_dir, task)
     init_archive(archive)
-    with git_env(_cred(store, row["cred_id"]), data_dir / "work") as env:
+    with git_env(_cred(store, row["cred_id"]), effective_work_dir(data_dir)) as env:
         bind(archive, _target(row), env=env)
     store.set_bound(target_id, True)
 
@@ -99,7 +100,7 @@ def _push_one(
     held: list[list[str]] | None = None,
 ) -> tuple[str, str]:
     target = _target(row)
-    with git_env(_cred(store, row["cred_id"]), data_dir / "work") as env:
+    with git_env(_cred(store, row["cred_id"]), effective_work_dir(data_dir)) as env:
         res = push_target(archive, target, env=env)
         if res.history_conflicts:
             return "history_conflict", msg(
@@ -304,7 +305,7 @@ def _execute(
     capture_error = None
     result = None
     try:
-        with git_env(_cred(store, source_cred), data_dir / "work") as env:
+        with git_env(_cred(store, source_cred), effective_work_dir(data_dir)) as env:
             result = _observed(
                 store,
                 run_id,
@@ -605,7 +606,7 @@ def audit_target(
     run_id = store.start_run(task["id"])
     detailed = bool(task["detailed_logging"])
     try:
-        with git_env(_cred(store, row["cred_id"]), data_dir / "work") as env:
+        with git_env(_cred(store, row["cred_id"]), effective_work_dir(data_dir)) as env:
             with _execution_context(lambda _text: None, stall_minutes=stall_minutes):
                 with archive_lock(archive):
                     report = _observed(

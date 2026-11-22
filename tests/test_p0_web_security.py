@@ -302,3 +302,62 @@ def test_i18n_keys_stay_identical():
     en = json.loads((i18n_dir / "en.json").read_text(encoding="utf-8"))
     zh = json.loads((i18n_dir / "zh_CN.json").read_text(encoding="utf-8"))
     assert set(en) == set(zh)
+
+
+def test_cookie_secure_auto_supports_intranet_http_and_extranet_https(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GW_COOKIE_SECURE", "auto")
+    app = create_app(
+        Config(data_dir=tmp_path / "data", admin_password=PASSWORD),
+        start_scheduler=False,
+    )
+    with TestClient(app) as client:
+        # Direct HTTP (e.g. EasyTier intranet) omits Secure flag so login works.
+        resp_http = client.post("/login", data={"password": PASSWORD}, follow_redirects=False)
+        assert resp_http.status_code == 303
+        set_cookie_http = resp_http.headers.get("set-cookie", "")
+        assert "gw_session=" in set_cookie_http
+        assert "; Secure" not in set_cookie_http and "; secure" not in set_cookie_http.lower()
+
+        # Behind HTTPS reverse proxy (X-Forwarded-Proto: https) sets Secure flag.
+        resp_https = client.post(
+            "/login",
+            data={"password": PASSWORD},
+            headers={"X-Forwarded-Proto": "https"},
+            follow_redirects=False,
+        )
+        assert resp_https.status_code == 303
+        set_cookie_https = resp_https.headers.get("set-cookie", "")
+        assert "gw_session=" in set_cookie_https
+        assert "secure" in set_cookie_https.lower()
+
+
+def test_dedicated_work_dir_used_for_cleanup_and_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gitwarden.config import load_config
+
+    data_dir = tmp_path / "data"
+    dedicated_work = tmp_path / "work"
+    dedicated_work.mkdir()
+    stale_bundle = dedicated_work / "bundle-stale"
+    stale_bundle.mkdir()
+    (stale_bundle / "restore.bundle").write_bytes(b"stale")
+    keep_file = dedicated_work / "keep.txt"
+    keep_file.write_text("ok", encoding="utf-8")
+
+    cfg = load_config(
+        {
+            "GW_DATA_DIR": str(data_dir),
+            "GW_WORK_DIR": str(dedicated_work),
+            "GW_ADMIN_PASSWORD": PASSWORD,
+        }
+    )
+    assert cfg.work_dir == dedicated_work
+
+    app = create_app(cfg, start_scheduler=False)
+    with TestClient(app):
+        assert not stale_bundle.exists()
+        assert keep_file.exists()
+        assert not (data_dir / "work").exists()

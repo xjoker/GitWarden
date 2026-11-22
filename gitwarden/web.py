@@ -29,7 +29,7 @@ from jinja2 import pass_context
 from starlette.background import BackgroundTask
 
 from gitwarden.archive import ArchiveBusy, archive_lock
-from gitwarden.config import Config
+from gitwarden.config import Config, effective_work_dir
 from gitwarden.db import Store, now
 from gitwarden.git import GitError, execution_context, run
 from gitwarden.i18n import (
@@ -256,31 +256,43 @@ class LoginRateLimiter:
             self._global.clear()
 
 
-def _cookie_secure() -> bool:
-    return os.environ.get("GW_COOKIE_SECURE", "").strip().lower() in _COOKIE_SECURE_TRUE
+def _cookie_secure(request: Request | None = None) -> bool:
+    raw = os.environ.get("GW_COOKIE_SECURE", "").strip().lower()
+    if raw == "auto":
+        if request is None:
+            return False
+        if request.url.scheme == "https":
+            return True
+        forwarded = request.headers.get("x-forwarded-proto", "")
+        return forwarded.split(",", 1)[0].strip().lower() == "https"
+    return raw in _COOKIE_SECURE_TRUE
 
 
-def _cleanup_stale_work(data_dir: Path) -> None:
-    """清理上次异常退出遗留的 work/ssh-* 与 work/bundle-* 临时目录或文件。"""
-    work_dir = data_dir / "work"
-    if not work_dir.is_dir():
-        return
-    try:
-        entries = list(work_dir.iterdir())
-    except OSError:
-        return
-    for entry in entries:
-        if not entry.name.startswith(("ssh-", "bundle-")):
+def _cleanup_stale_work(data_dir: Path, work_dir: Path | None = None) -> None:
+    """清理上次异常退出遗留的 ssh-* 与 bundle-* 临时目录或文件。"""
+    candidates = [effective_work_dir(data_dir, work_dir)]
+    default_work = data_dir / "work"
+    if default_work not in candidates:
+        candidates.append(default_work)
+    for target_dir in candidates:
+        if not target_dir.is_dir():
             continue
         try:
-            if entry.is_symlink() or entry.is_file():
-                entry.unlink(missing_ok=True)
-            elif entry.is_dir():
-                shutil.rmtree(entry, ignore_errors=True)
-            else:
-                entry.unlink(missing_ok=True)
+            entries = list(target_dir.iterdir())
         except OSError:
-            pass
+            continue
+        for entry in entries:
+            if not entry.name.startswith(("ssh-", "bundle-")):
+                continue
+            try:
+                if entry.is_symlink() or entry.is_file():
+                    entry.unlink(missing_ok=True)
+                elif entry.is_dir():
+                    shutil.rmtree(entry, ignore_errors=True)
+                else:
+                    entry.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _session_clock(app: Any) -> float:
@@ -942,7 +954,7 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
             "UPDATE runs SET finished_at=?, status='failed', message=? WHERE finished_at IS NULL",
             (now(), msg("run.interrupted")),
         )
-        _cleanup_stale_work(config.data_dir)
+        _cleanup_stale_work(config.data_dir, config.work_dir)
         scheduler = Scheduler(
             store,
             config.data_dir,
@@ -969,6 +981,7 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
         openapi_url=None,
     )
     app.state.data_dir = config.data_dir
+    app.state.work_dir = config.work_dir
     app.state.stall_minutes = config.stall_minutes
     app.state.sessions = {}
     app.state.sessions_lock = threading.Lock()
@@ -1013,7 +1026,7 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
                 path="/",
                 httponly=True,
                 samesite="strict",
-                secure=_cookie_secure(),
+                secure=_cookie_secure(request),
             )
         return response
 
@@ -1098,7 +1111,7 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
             token,
             httponly=True,
             samesite="strict",
-            secure=_cookie_secure(),
+            secure=_cookie_secure(request),
             path="/",
         )
         return response
@@ -1115,7 +1128,7 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
             path="/",
             httponly=True,
             samesite="strict",
-            secure=_cookie_secure(),
+            secure=_cookie_secure(request),
         )
         return response
 
@@ -1614,7 +1627,7 @@ def create_app(config: Config, start_scheduler: bool = True) -> FastAPI:
             raise HTTPException(404, t("error.no_bundle"))
         data_dir: Path = request.app.state.data_dir
         archive = archive_path(data_dir, task)
-        work = data_dir / "work"
+        work = effective_work_dir(data_dir, getattr(request.app.state, "work_dir", None))
         work.mkdir(parents=True, exist_ok=True)
         tmp = Path(tempfile.mkdtemp(prefix="bundle-", dir=work))
         try:

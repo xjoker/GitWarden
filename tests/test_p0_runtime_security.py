@@ -23,8 +23,9 @@ def test_compose_hh_lon_production_constraints() -> None:
     compose_prod = (REPO_ROOT / "compose.hh-lon.yml").read_text(encoding="utf-8")
     compose_dev = (REPO_ROOT / "compose.yml").read_text(encoding="utf-8")
 
-    # Bind mount to /data HDD with ownership/permission documentation, no named volume.
+    # Bind mounts to /data HDD with dedicated scratch dir, no named volume.
     assert "/data/gitwarden:/data" in compose_prod
+    assert "/data/gitwarden-work:/work" in compose_prod
     assert "gitwarden-data:/data" not in compose_prod
     assert "10001:10001" in compose_prod
     assert "0700" in compose_prod
@@ -32,15 +33,15 @@ def test_compose_hh_lon_production_constraints() -> None:
     # Existing compose.yml stays intact for local dev.
     assert "gitwarden-data:/data" in compose_dev
 
-    # Loopback-only binding, resource caps, tmpfs size cap, and security hardening.
-    assert "127.0.0.1:${GW_PORT:-8080}:8080" in compose_prod
-    assert "GW_BIND" not in compose_prod
+    # Loopback-by-default dual-mode binding, resource caps, tmpfs size cap, and security hardening.
+    assert "${GW_BIND_ADDR:-127.0.0.1}:${GW_PORT:-8080}:8080" in compose_prod
     assert "mem_limit: 1g" in compose_prod
     assert 'cpus: "1.0"' in compose_prod
     assert "pids_limit: 256" in compose_prod
     assert "/tmp:rw,noexec,nosuid,nodev,size=128m" in compose_prod
     assert 'GW_WORKERS: "1"' in compose_prod
-    assert 'GW_COOKIE_SECURE: "1"' in compose_prod
+    assert 'GW_WORK_DIR: "/work"' in compose_prod
+    assert 'GW_COOKIE_SECURE: "${GW_COOKIE_SECURE:-auto}"' in compose_prod
     assert "read_only: true" in compose_prod
     assert "- ALL" in compose_prod
     assert "no-new-privileges=true" in compose_prod

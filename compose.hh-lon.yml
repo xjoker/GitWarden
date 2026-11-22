@@ -1,14 +1,24 @@
 # Production Docker Compose configuration for hh-lon (2 vCPU / 8 GiB RAM, 48 GB root SSD, 6.4 TB /data HDD).
 #
 # Host preparation (run once before `docker compose -f compose.hh-lon.yml up -d`):
-#   install -d -m 0700 -o 10001 -g 10001 /data/gitwarden
+#   install -d -m 0700 -o 10001 -g 10001 /data/gitwarden /data/gitwarden-work
 #
-# The container runs as UID/GID 10001:10001 (non-root user `gitwarden`), so /data/gitwarden
+# The container runs as UID/GID 10001:10001 (non-root user `gitwarden`), so both directories
 # MUST be owned by 10001:10001 with mode 0700 and reside on the 6.4 TB /data HDD (never on
 # the 48 GB root SSD via a named Docker volume).
 #
-# Backup note (e.g., Kopia): exclude /data/gitwarden/work/ and snapshot SQLite databases
-# consistently via `sqlite3 ... ".backup ..."` rather than copying live WAL files.
+# Dedicated scratch directory:
+#   /data/gitwarden      -> persistent bare archives, config, and SQLite DB (/data)
+#   /data/gitwarden-work -> transient bundle exports (/work), isolated so backups of
+#                           /data/gitwarden do not pick up temporary work files.
+#
+# Dual-mode access (intranet HTTP + extranet HTTPS):
+#   - Default binds 127.0.0.1:8080 for local OpenResty HTTPS reverse proxy.
+#   - For simultaneous EasyTier intranet HTTP + OpenResty HTTPS access, set
+#     GW_BIND_ADDR=10.0.4.22 (never 0.0.0.0) and proxy OpenResty to http://10.0.4.22:8080
+#     with `proxy_set_header X-Forwarded-Proto $scheme;`.
+#   - GW_COOKIE_SECURE=auto sets Secure on gw_session for HTTPS / X-Forwarded-Proto: https
+#     requests while keeping direct intranet HTTP login working.
 
 services:
   gitwarden:
@@ -21,13 +31,16 @@ services:
     environment:
       GW_PORT: "8080"
       GW_WORKERS: "1"
-      GW_COOKIE_SECURE: "1"
+      GW_WORK_DIR: "/work"
+      GW_COOKIE_SECURE: "${GW_COOKIE_SECURE:-auto}"
     volumes:
       # Persistent bare archives and SQLite DB on /data HDD (10001:10001, 0700).
       - /data/gitwarden:/data
+      # Dedicated scratch directory for bundle exports (10001:10001, 0700).
+      - /data/gitwarden-work:/work
     ports:
-      # Loopback only; expose externally via local reverse proxy (e.g., OpenResty HTTPS).
-      - "127.0.0.1:${GW_PORT:-8080}:8080"
+      # Loopback by default; set GW_BIND_ADDR=<easytier-ip> for dual-mode intranet + OpenResty.
+      - "${GW_BIND_ADDR:-127.0.0.1}:${GW_PORT:-8080}:8080"
     mem_limit: 1g
     cpus: "1.0"
     pids_limit: 256
